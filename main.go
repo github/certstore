@@ -1,23 +1,12 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import "os"
 
 func main() {
-	idents := findIdentities()
+	ident := findPreferredIdentity("mastahyeti@gmail.com")
+	defer ident.Close()
 
-	for i, ident := range idents {
-		defer ident.Close()
-
-		f, err := os.Create(fmt.Sprintf("%d.der", i))
-		if err != nil {
-			panic(err)
-		}
-
-		if _, err := f.Write(ident.getCertificate().getDER()); err != nil {
-			panic(err)
-		}
-	}
+	f, _ := os.Create("key.der")
+	f.Write(ident.getPrivateKey().getDER())
+	f.Close()
 }

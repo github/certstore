@@ -11,62 +11,98 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"unsafe"
 )
 
-type certificate struct {
-	ref    C.SecCertificateRef
+// macIdentity implements the Identity iterface.
+type macIdentity struct {
+	ref    C.SecIdentityRef
 	crt    *x509.Certificate
+	key    crypto.PrivateKey
 	closed bool
 }
 
-func (c *certificate) get() *x509.Certificate {
-	if c.closed {
+func findPreferredIdentity(name string) Identity {
+	cfName := stringToCFString(name)
+	defer C.CFRelease(C.CFTypeRef(cfName))
+
+	identRef := C.SecIdentityCopyPreferred(cfName, nil, nil)
+	if identRef == nil {
 		return nil
 	}
 
-	if c.crt != nil {
-		return c.crt
+	return newIdentity(identRef)
+}
+
+func findIdentities() ([]Identity, error) {
+	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
+		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
+	})
+	defer C.CFRelease(C.CFTypeRef(query))
+
+	var absResult C.CFTypeRef
+	if err := osStatusError(C.SecItemCopyMatching(query, &absResult)); err != nil {
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(absResult))
+
+	aryResult := C.CFArrayRef(absResult)
+	n := C.CFArrayGetCount(aryResult)
+	identRefs := make([]C.CFTypeRef, n)
+	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(&identRefs[0]))
+
+	idents := make([]Identity, 0, n)
+	for _, identRef := range identRefs {
+		idents = append(idents, newIdentity(C.SecIdentityRef(identRef)))
 	}
 
-	derRef := C.SecCertificateCopyData(c.ref)
+	return idents, nil
+}
+
+func newIdentity(ref C.SecIdentityRef) *macIdentity {
+	C.CFRetain(C.CFTypeRef(ref))
+	return &macIdentity{ref: ref}
+}
+
+// GetCertificate implements the Identity iterface.
+func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
+	if i.closed {
+		return nil, errors.New("identity closed")
+	}
+
+	if i.ref == nil {
+		return nil, errors.New("nil identity ref")
+	}
+
+	if i.crt != nil {
+		return i.crt, nil
+	}
+
+	var certRef C.SecCertificateRef
+	if err := osStatusError(C.SecIdentityCopyCertificate(i.ref, &certRef)); err != nil {
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(certRef))
+
+	derRef := C.SecCertificateCopyData(certRef)
 	if derRef == nil {
-		fmt.Println("ERR: SecCertificateCopyData nil")
-		return nil
+		return nil, errors.New("error getting certificate from identity")
 	}
 	defer C.CFRelease(C.CFTypeRef(derRef))
 
-	nBytes := C.int((C.CFDataGetLength(derRef)))
-	bytesPtr := C.CFDataGetBytePtr(derRef)
-	der := C.GoBytes(unsafe.Pointer(bytesPtr), nBytes)
-
+	der := cfDataToBytes(derRef)
 	crt, err := x509.ParseCertificate(der)
 	if err != nil {
-		panic(err)
+		return nil, errors.New("identity closed")
 	}
 
-	c.crt = crt
+	i.crt = crt
 
-	return c.crt
-}
-
-func (c *certificate) Close() {
-	if c == nil || c.closed {
-		return
-	}
-
-	if c.ref != nil {
-		C.CFRelease(C.CFTypeRef(c.ref))
-	}
-
-	c.closed = true
-}
-
-type privateKey struct {
-	ref    C.SecKeyRef
-	key    crypto.PrivateKey
-	closed bool
+	return i.crt, nil
 }
 
 var (
@@ -75,14 +111,25 @@ var (
 	secAttrKeyTypeECSECPrimeRandom = cfStringToString(C.kSecAttrKeyTypeECSECPrimeRandom)
 )
 
-func (k *privateKey) get() crypto.PrivateKey {
-	if k.closed {
-		return nil
+// GetPrivateKey implements the Identity iterface.
+func (i *macIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
+	if i.closed {
+		return nil, errors.New("identity closed")
 	}
 
-	if k.key != nil {
-		return k.key
+	if i.ref == nil {
+		return nil, errors.New("nil identity ref")
 	}
+
+	if i.key != nil {
+		return i.key, nil
+	}
+
+	var keyRef C.SecKeyRef
+	if err := osStatusError(C.SecIdentityCopyPrivateKey(i.ref, &keyRef)); err != nil {
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(keyRef))
 
 	passphrase := C.CFTypeRef(stringToCFString("asdf"))
 	defer C.CFRelease(passphrase)
@@ -93,38 +140,30 @@ func (k *privateKey) get() crypto.PrivateKey {
 	}
 
 	var derRef C.CFDataRef
-
-	if err := C.SecItemExport(C.CFTypeRef(k.ref), C.kSecFormatWrappedOpenSSL, 0, params, &derRef); err != C.errSecSuccess {
-		fmt.Println("ERR: SecItemExport ", err)
-		return nil
+	if err := osStatusError(C.SecItemExport(C.CFTypeRef(keyRef), C.kSecFormatWrappedOpenSSL, 0, params, &derRef)); err != nil {
+		return nil, err
 	}
 
-	nBytes := C.int((C.CFDataGetLength(derRef)))
-	bytesPtr := C.CFDataGetBytePtr(derRef)
-	pemBytes := C.GoBytes(unsafe.Pointer(bytesPtr), nBytes)
-
+	pemBytes := cfDataToBytes(derRef)
 	blk, rest := pem.Decode(pemBytes)
 	if len(rest) > 0 {
-		panic("error decoding key from keychain")
+		return nil, errors.New("error decoding PEM private key")
 	}
 
 	der, err := x509.DecryptPEMBlock(blk, []byte("asdf"))
 	if err != nil {
-		fmt.Println("ERR: DecryptPEMBlock ", err)
-		return nil
+		return nil, err
 	}
 
-	attrs := C.SecKeyCopyAttributes(k.ref)
+	attrs := C.SecKeyCopyAttributes(keyRef)
 	if attrs == nil {
-		fmt.Println("ERR: SecKeyCopyAttributes nil")
-		return nil
+		return nil, errors.New("error getting private key attributes from keychain")
 	}
 	defer C.CFRelease(C.CFTypeRef(attrs))
 
 	cfAlgo := C.CFDictionaryGetValue(attrs, unsafe.Pointer(C.kSecAttrKeyType))
 	if cfAlgo == nil {
-		fmt.Println("ERR: CFDictionaryGetValue nil")
-		return nil
+		return nil, errors.New("error getting private key type from keychain")
 	}
 
 	var key crypto.PrivateKey
@@ -135,126 +174,20 @@ func (k *privateKey) get() crypto.PrivateKey {
 	case secAttrKeyTypeEC, secAttrKeyTypeECSECPrimeRandom:
 		key, err = x509.ParseECPrivateKey(der)
 	default:
-		panic("ERR: unknown private key algorithm")
+		return nil, errors.New("unkown private key type")
 	}
 
 	if err != nil {
-		panic(err)
-	}
-
-	k.key = key
-
-	return k.key
-}
-
-func (k *privateKey) Close() {
-	if k == nil || k.closed {
-		return
-	}
-
-	if k.ref != nil {
-		C.CFRelease(C.CFTypeRef(k.ref))
-	}
-
-	k.closed = true
-}
-
-type identity struct {
-	ref    C.SecIdentityRef
-	cert   *certificate
-	key    *privateKey
-	closed bool
-}
-
-func findPreferredIdentity(name string) *identity {
-	cfName := stringToCFString(name)
-	defer C.CFRelease(C.CFTypeRef(cfName))
-
-	identRef := C.SecIdentityCopyPreferred(cfName, nil, nil)
-	if identRef == nil {
-		fmt.Println("ERR: SecIdentityCopyPreferred nil")
-		return nil
-	}
-
-	return newIdentity(identRef)
-}
-
-func findIdentities() []*identity {
-	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
-		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
-		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
-	})
-	defer C.CFRelease(C.CFTypeRef(query))
-
-	var absResult C.CFTypeRef
-	if err := C.SecItemCopyMatching(query, &absResult); err != C.errSecSuccess {
-		fmt.Println("ERR: SecItemCopyMatching ", err)
-		return nil
-	}
-	defer C.CFRelease(C.CFTypeRef(absResult))
-
-	aryResult := C.CFArrayRef(absResult)
-	n := C.CFArrayGetCount(aryResult)
-	identRefs := make([]C.CFTypeRef, n)
-	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(&identRefs[0]))
-
-	idents := make([]*identity, 0, n)
-	for _, identRef := range identRefs {
-		idents = append(idents, newIdentity(C.SecIdentityRef(identRef)))
-		C.CFRetain(identRef)
-	}
-
-	return idents
-}
-
-func newIdentity(ref C.SecIdentityRef) *identity {
-	return &identity{ref: ref}
-}
-
-func (i *identity) getCertificate() *certificate {
-	if i.closed {
-		return nil
-	}
-
-	if i.cert != nil {
-		return i.cert
-	}
-
-	cert := new(certificate)
-
-	if err := C.SecIdentityCopyCertificate(i.ref, &cert.ref); err != C.errSecSuccess {
-		fmt.Println("ERR: SecIdentityCopyCertificate ", err)
-		return nil
-	}
-
-	i.cert = cert
-
-	return cert
-}
-
-func (i *identity) getPrivateKey() *privateKey {
-	if i.closed {
-		return nil
-	}
-
-	if i.key != nil {
-		return i.key
-	}
-
-	key := new(privateKey)
-
-	if err := C.SecIdentityCopyPrivateKey(i.ref, &key.ref); err != C.errSecSuccess {
-		fmt.Println("ERR: SecIdentityCopyPrivateKey ", err)
-		return nil
+		return nil, err
 	}
 
 	i.key = key
 
-	return key
+	return i.key, nil
 }
 
-func (i *identity) Close() {
+// Close implements the Identity iterface.
+func (i *macIdentity) Close() {
 	if i == nil {
 		return
 	}
@@ -263,12 +196,21 @@ func (i *identity) Close() {
 		C.CFRelease(C.CFTypeRef(i.ref))
 	}
 
-	i.cert.Close()
-	i.key.Close()
-
 	i.closed = true
 }
 
+// cfStringToString converts a CFStringRef to a Go string.
+func cfStringToString(cfstr C.CFStringRef) string {
+	cstr := C.CFStringGetCStringPtr(cfstr, C.kCFStringEncodingUTF8)
+	if cstr == nil {
+		fmt.Println("ERR: CFStringGetCStringPtr nil")
+		return ""
+	}
+
+	return C.GoString(cstr)
+}
+
+// stringToCFString converts a Go string to a CFStringRef.
 func stringToCFString(gostr string) C.CFStringRef {
 	cstr := C.CString(gostr)
 	defer C.free(unsafe.Pointer(cstr))
@@ -276,6 +218,8 @@ func stringToCFString(gostr string) C.CFStringRef {
 	return C.CFStringCreateWithCString(nil, cstr, C.kCFStringEncodingUTF8)
 }
 
+// mapToCFDictionary converts a Go map[C.CFTypeRef]C.CFTypeRef to a
+// CFDictionaryRef.
 func mapToCFDictionary(gomap map[C.CFTypeRef]C.CFTypeRef) C.CFDictionaryRef {
 	var (
 		n      = len(gomap)
@@ -291,6 +235,7 @@ func mapToCFDictionary(gomap map[C.CFTypeRef]C.CFTypeRef) C.CFDictionaryRef {
 	return C.CFDictionaryCreate(nil, &keys[0], &values[0], C.CFIndex(n), nil, nil)
 }
 
+// cfErrorToString converts a CFErrorRef to a Go String.
 func cfErrorToString(err C.CFErrorRef) string {
 	code := int(C.CFErrorGetCode(err))
 
@@ -302,12 +247,24 @@ func cfErrorToString(err C.CFErrorRef) string {
 	return fmt.Sprintf("%d (%s)", code, description)
 }
 
-func cfStringToString(cfstr C.CFStringRef) string {
-	cstr := C.CFStringGetCStringPtr(cfstr, C.kCFStringEncodingUTF8)
-	if cstr == nil {
-		fmt.Println("ERR: CFStringGetCStringPtr nil")
-		return ""
+// cfDataToBytes converts a CFDataRef to a Go byte slice.
+func cfDataToBytes(cfdata C.CFDataRef) []byte {
+	nBytes := C.CFDataGetLength(cfdata)
+	bytesPtr := C.CFDataGetBytePtr(cfdata)
+	return C.GoBytes(unsafe.Pointer(bytesPtr), C.int(nBytes))
+}
+
+type osStatus C.OSStatus
+
+func osStatusError(s C.OSStatus) error {
+	if s == C.errSecSuccess {
+		return nil
 	}
 
-	return C.GoString(cstr)
+	return osStatus(s)
+}
+
+// Error implements the error interface.
+func (s osStatus) Error() string {
+	return fmt.Sprintf("OSStatus %d", s)
 }

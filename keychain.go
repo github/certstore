@@ -12,4 +12,7 @@ type Identity interface {
 
 	// GetPrivateKey gets the identity's private key.
 	GetPrivateKey() (crypto.PrivateKey, error)
+
+	// Close any manually managed memory held by the Identity.
+	Close()
 }

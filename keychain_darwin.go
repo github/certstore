@@ -8,6 +8,7 @@ package main
 */
 import "C"
 import (
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -16,17 +17,17 @@ import (
 
 type certificate struct {
 	ref    C.SecCertificateRef
-	der    []byte
+	crt    *x509.Certificate
 	closed bool
 }
 
-func (c *certificate) getDER() []byte {
+func (c *certificate) get() *x509.Certificate {
 	if c.closed {
 		return nil
 	}
 
-	if c.der != nil {
-		return c.der
+	if c.crt != nil {
+		return c.crt
 	}
 
 	derRef := C.SecCertificateCopyData(c.ref)
@@ -38,9 +39,16 @@ func (c *certificate) getDER() []byte {
 
 	nBytes := C.int((C.CFDataGetLength(derRef)))
 	bytesPtr := C.CFDataGetBytePtr(derRef)
-	c.der = C.GoBytes(unsafe.Pointer(bytesPtr), nBytes)
+	der := C.GoBytes(unsafe.Pointer(bytesPtr), nBytes)
 
-	return c.der
+	crt, err := x509.ParseCertificate(der)
+	if err != nil {
+		panic(err)
+	}
+
+	c.crt = crt
+
+	return c.crt
 }
 
 func (c *certificate) Close() {
@@ -57,17 +65,23 @@ func (c *certificate) Close() {
 
 type privateKey struct {
 	ref    C.SecKeyRef
-	der    []byte
+	key    crypto.PrivateKey
 	closed bool
 }
 
-func (k *privateKey) getDER() []byte {
+var (
+	secAttrKeyTypeRSA              = cfStringToString(C.kSecAttrKeyTypeRSA)
+	secAttrKeyTypeEC               = cfStringToString(C.kSecAttrKeyTypeEC)
+	secAttrKeyTypeECSECPrimeRandom = cfStringToString(C.kSecAttrKeyTypeECSECPrimeRandom)
+)
+
+func (k *privateKey) get() crypto.PrivateKey {
 	if k.closed {
 		return nil
 	}
 
-	if k.der != nil {
-		return k.der
+	if k.key != nil {
+		return k.key
 	}
 
 	passphrase := C.CFTypeRef(stringToCFString("asdf"))
@@ -94,12 +108,43 @@ func (k *privateKey) getDER() []byte {
 		panic("error decoding key from keychain")
 	}
 
-	var err error
-	if k.der, err = x509.DecryptPEMBlock(blk, []byte("asdf")); err != nil {
+	der, err := x509.DecryptPEMBlock(blk, []byte("asdf"))
+	if err != nil {
+		fmt.Println("ERR: DecryptPEMBlock ", err)
+		return nil
+	}
+
+	attrs := C.SecKeyCopyAttributes(k.ref)
+	if attrs == nil {
+		fmt.Println("ERR: SecKeyCopyAttributes nil")
+		return nil
+	}
+	defer C.CFRelease(C.CFTypeRef(attrs))
+
+	cfAlgo := C.CFDictionaryGetValue(attrs, unsafe.Pointer(C.kSecAttrKeyType))
+	if cfAlgo == nil {
+		fmt.Println("ERR: CFDictionaryGetValue nil")
+		return nil
+	}
+
+	var key crypto.PrivateKey
+
+	switch cfStringToString(C.CFStringRef(cfAlgo)) {
+	case secAttrKeyTypeRSA:
+		key, err = x509.ParsePKCS1PrivateKey(der)
+	case secAttrKeyTypeEC, secAttrKeyTypeECSECPrimeRandom:
+		key, err = x509.ParseECPrivateKey(der)
+	default:
+		panic("ERR: unknown private key algorithm")
+	}
+
+	if err != nil {
 		panic(err)
 	}
 
-	return k.der
+	k.key = key
+
+	return k.key
 }
 
 func (k *privateKey) Close() {
@@ -252,10 +297,17 @@ func cfErrorToString(err C.CFErrorRef) string {
 	cfDescription := C.CFErrorCopyDescription(err)
 	defer C.CFRelease(C.CFTypeRef(cfDescription))
 
-	cDescription := C.CFStringGetCStringPtr(cfDescription, C.kCFStringEncodingUTF8)
-	defer C.free(unsafe.Pointer(cDescription))
-
-	description := C.GoString(cDescription)
+	description := cfStringToString(cfDescription)
 
 	return fmt.Sprintf("%d (%s)", code, description)
+}
+
+func cfStringToString(cfstr C.CFStringRef) string {
+	cstr := C.CFStringGetCStringPtr(cfstr, C.kCFStringEncodingUTF8)
+	if cstr == nil {
+		fmt.Println("ERR: CFStringGetCStringPtr nil")
+		return ""
+	}
+
+	return C.GoString(cstr)
 }

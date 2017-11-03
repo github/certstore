@@ -36,7 +36,7 @@ func findPreferredIdentity(name string) Identity {
 	return newIdentity(identRef)
 }
 
-func findIdentities() ([]Identity, error) {
+func FindIdentities() ([]Identity, error) {
 	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
 		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),

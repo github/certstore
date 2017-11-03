@@ -1,8 +1,8 @@
 package main
 
 /*
+#cgo windows LDFLAGS: -lcrypt32 -lpthread
 #include <windows.h>
-#include <security.h>
 #include <wincrypt.h>
 #include <winerror.h>
 */
@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"unsafe"
 )
 
 type winCertStore struct {
@@ -20,16 +21,19 @@ type winCertStore struct {
 }
 
 func openMyCertStore() (*winCertStore, error) {
-	s := C.CertOpenSystemStore(nil, "MY")
+	storeName := C.CString("MY")
+	defer C.free(unsafe.Pointer(storeName))
+
+	s := C.CertOpenSystemStore(0, (*C.CHAR)(storeName))
 	if s == nil {
 		return nil, lastError()
 	}
 
-	return winCertStore{s}, nil
+	return &winCertStore{s}, nil
 }
 
 func (s *winCertStore) Close() {
-	C.CertCloseStore(s.store)
+	C.CertCloseStore(s.store, 0)
 }
 
 // winIdentity implements the Identity iterface.

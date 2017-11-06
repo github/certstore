@@ -17,5 +17,9 @@ func main() {
 		}
 
 		fmt.Printf("CN=%s\n", cert.Subject.CommonName)
+
+		if _, err = ident.GetPrivateKey(); err != nil {
+			panic(err)
+		}
 	}
 }

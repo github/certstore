@@ -33,9 +33,10 @@ func findPreferredIdentity(name string) Identity {
 		return nil
 	}
 
-	return newIdentity(identRef)
+	return newMacIdentity(identRef)
 }
 
+// FindIdentities returns a slice of available signing identities.
 func FindIdentities() ([]Identity, error) {
 	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
@@ -57,13 +58,13 @@ func FindIdentities() ([]Identity, error) {
 
 	idents := make([]Identity, 0, n)
 	for _, identRef := range identRefs {
-		idents = append(idents, newIdentity(C.SecIdentityRef(identRef)))
+		idents = append(idents, newMacIdentity(C.SecIdentityRef(identRef)))
 	}
 
 	return idents, nil
 }
 
-func newIdentity(ref C.SecIdentityRef) *macIdentity {
+func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 	C.CFRetain(C.CFTypeRef(ref))
 	return &macIdentity{ref: ref}
 }

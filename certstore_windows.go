@@ -29,35 +29,6 @@ LPCWSTR ncryptAlgorithmGroupProperty() {
   return NCRYPT_ALGORITHM_GROUP_PROPERTY;
 }
 
-void exportNCryptKey(NCRYPT_KEY_HANDLE k, char** out, int* outlen) {
-	SECURITY_STATUS status;
-	DWORD dlen;
-	char *buf = NULL;
-
-	status = NCryptExportKey(k, 0, BCRYPT_RSAFULLPRIVATE_BLOB, NULL, NULL, 0, &dlen, 0);
-	if (status != ERROR_SUCCESS) {
-		printf("Error calling NCryptExportKey: %d\n", status);
-		return;
-	}
-
-	buf = malloc(dlen);
-	if (buf == NULL) {
-		printf("Error allocating memory for key export.\n");
-		return;
-	}
-
-	status = NCryptExportKey(k, 0, BCRYPT_RSAFULLPRIVATE_BLOB, NULL, buf, dlen, &dlen, 0);
-	if (status != ERROR_SUCCESS) {
-		printf("Error calling NCryptExportKey: %d\n", status);
-		return;
-	}
-
-	printf("success!\n");
-	*out = buf;
-
-	return ;
-}
-
 char* errMsg(DWORD code) {
 	char* lpMsgBuf;
 	DWORD ret = 0;
@@ -90,6 +61,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -113,6 +85,10 @@ func FindIdentities() ([]Identity, error) {
 	}
 	defer store.Close()
 
+	return findIdentities(store)
+}
+
+func findIdentities(store *winStore) ([]Identity, error) {
 	idents := make([]Identity, 0)
 
 	for ctx := store.nextCert(); ctx != nil; ctx = store.nextCert() {
@@ -142,6 +118,10 @@ func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
 
 	der := C.GoBytes(unsafe.Pointer(i.ctx.pbCertEncoded), C.int(i.ctx.cbCertEncoded))
 
+	f, _ := os.Create("eccert.der")
+	f.Write(der)
+	f.Close()
+
 	return x509.ParseCertificate(der)
 }
 
@@ -157,8 +137,7 @@ func (i *winIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
 		mustFree C.WINBOOL
 	)
 
-	if ok := C.CryptAcquireCertificatePrivateKey(i.ctx, C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG, nil, &key, &keySpec, &mustFree); ok == winFalse {
-		fmt.Println("ERR CryptAcquireCertificatePrivateKey")
+	if ok := C.CryptAcquireCertificatePrivateKey(i.ctx, C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG|C.CRYPT_ACQUIRE_CACHE_FLAG, nil, &key, &keySpec, &mustFree); ok == winFalse {
 		return nil, lastError()
 	}
 
@@ -183,19 +162,16 @@ func (i *winIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
 
 		var caKey C.HCRYPTKEY
 		if ok := C.CryptGetUserKey(caProv, keySpec, &caKey); ok == winFalse {
-			fmt.Println("Error calling CryptGetUserKey")
 			return nil, lastError()
 		}
 
 		var dataLen C.DWORD
 		if ok := C.CryptExportKey(caKey, 0, C.PRIVATEKEYBLOB, 0, nil, &dataLen); ok == winFalse {
-			fmt.Println("Error calling CryptExportKey(1).")
 			return nil, lastError()
 		}
 
 		data := make([]C.BYTE, dataLen)
 		if ok := C.CryptExportKey(caKey, 0, C.PRIVATEKEYBLOB, 0, &data[0], &dataLen); ok == winFalse {
-			fmt.Println("Error calling CryptExportKey(2).")
 			return nil, lastError()
 		}
 
@@ -221,7 +197,7 @@ func exportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (crypto.PrivateKey, error) {
 	switch algo {
 	case "RSA":
 		return ncryptExportRSAKey(handle)
-	case "ECDSA":
+	case "ECDSA", "ECDH":
 		return ncryptExportECDSAKey(handle)
 	default:
 		return nil, fmt.Errorf("unsupported algorithm '%s'", algo)
@@ -231,13 +207,17 @@ func exportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (crypto.PrivateKey, error) {
 // canExportNCryptPrivateKey checks if a key is marked exportable.
 func canExportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (bool, error) {
 	var (
-		policy C.DWORD
+		policy C.DWORD = C.NCRYPT_ALLOW_EXPORT_FLAG | C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
 		nBytes C.DWORD
 
 		property   = C.ncryptExportPolicyProperty()
 		policyPtr  = (*C.BYTE)(unsafe.Pointer(&policy))
 		policySize = C.DWORD(unsafe.Sizeof(policy))
 	)
+
+	if err := checkStatus(C.NCryptSetProperty(handle, property, policyPtr, policySize, 0)); err != nil {
+		fmt.Println(err)
+	}
 
 	if err := checkStatus(C.NCryptGetProperty(handle, property, policyPtr, policySize, &nBytes, 0)); err != nil {
 		return false, err
@@ -366,11 +346,11 @@ func ncryptExportECDSAKey(handle C.NCRYPT_HANDLE) (*ecdsa.PrivateKey, error) {
 	var curve elliptic.Curve
 
 	switch hdr.dwMagic {
-	case C.BCRYPT_ECDSA_PRIVATE_P256_MAGIC:
+	case C.BCRYPT_ECDSA_PRIVATE_P256_MAGIC, C.BCRYPT_ECDH_PRIVATE_P256_MAGIC:
 		curve = elliptic.P256()
-	case C.BCRYPT_ECDSA_PRIVATE_P384_MAGIC:
+	case C.BCRYPT_ECDSA_PRIVATE_P384_MAGIC, C.BCRYPT_ECDH_PRIVATE_P384_MAGIC:
 		curve = elliptic.P384()
-	case C.BCRYPT_ECDSA_PRIVATE_P521_MAGIC:
+	case C.BCRYPT_ECDSA_PRIVATE_P521_MAGIC, C.BCRYPT_ECDH_PRIVATE_P521_MAGIC:
 		curve = elliptic.P521()
 	default:
 		return nil, fmt.Errorf("unknown elliptic key %X", int(hdr.dwMagic))
@@ -470,6 +450,27 @@ func openMyCertStore() (*winStore, error) {
 	}
 
 	return &winStore{store: s}, nil
+}
+
+// importCertStore imports certificates and private keys from PFX (PKCS12) data.
+func importCertStore(data []byte, password string) (*winStore, error) {
+	cdata := C.CBytes(data)
+	defer C.free(cdata)
+
+	cpw := stringToUTF16(password)
+	defer C.free(unsafe.Pointer(cpw))
+
+	pfx := &C.CRYPT_DATA_BLOB{
+		cbData: C.DWORD(len(data)),
+		pbData: (*C.BYTE)(cdata),
+	}
+
+	store := C.PFXImportCertStore(pfx, cpw, C.CRYPT_EXPORTABLE|C.PKCS12_NO_PERSIST_KEY)
+	if store == nil {
+		return nil, lastError()
+	}
+
+	return &winStore{store: store}, nil
 }
 
 // nextCert starts or continues an iteration through this store's certificates.
@@ -602,4 +603,14 @@ func checkStatus(s C.SECURITY_STATUS) error {
 
 func (s securityStatus) Error() string {
 	return fmt.Sprintf("SECURITY_STATUS %d", int(s))
+}
+
+func stringToUTF16(s string) C.LPCWSTR {
+	wstr := utf16.Encode([]rune(s))
+
+	p := C.calloc(C.size_t(len(wstr)+1), C.size_t(unsafe.Sizeof(uint16(0))))
+	pp := (*[1 << 30]uint16)(p)
+	copy(pp[:], wstr)
+
+	return (C.LPCWSTR)(p)
 }

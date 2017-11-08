@@ -34,6 +34,8 @@ import "C"
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -50,6 +52,7 @@ const (
 // winIdentity implements the Identity iterface.
 type winIdentity struct {
 	ctx    C.PCCERT_CONTEXT
+	signer crypto.Signer
 	closed bool
 }
 
@@ -97,19 +100,29 @@ func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
 	return x509.ParseCertificate(der)
 }
 
-// PublicKey implements the crypto.Signer interface.
-func (i *winIdentity) PublicKey() crypto.PublicKey {
-	cert, err := i.GetCertificate()
-	if err != nil {
-		fmt.Printf("Error getting identity certificate: %s", err.Error())
-		return nil
+// GetSigner implements the Identity interface.
+func (i *winIdentity) GetSigner() (crypto.Signer, error) {
+	if err := i._check(); err != nil {
+		return nil, err
 	}
 
-	return cert.PublicKey
-}
+	if i.signer != nil {
+		return i.signer, nil
+	}
 
-func (i *winIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return nil, nil
+	cert, err := i.GetCertificate()
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := newWinPrivateKey(i.ctx, cert.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	i.signer = signer
+
+	return i.signer, nil
 }
 
 // Close implements the Identity iterface.
@@ -135,6 +148,151 @@ func (i *winIdentity) _check() error {
 	}
 
 	return nil
+}
+
+// winPrivateKey is a wrapper around a HCRYPTPROV_OR_NCRYPT_KEY_HANDLE.
+type winPrivateKey struct {
+	publicKey crypto.PublicKey
+
+	// CryptoAPI fields
+	capiProv C.HCRYPTPROV
+
+	// CNG fields
+	cngHandle C.NCRYPT_KEY_HANDLE
+	keySpec   C.DWORD
+}
+
+// newWinPrivateKey gets a *winPrivateKey for the given certificate.
+func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*winPrivateKey, error) {
+	var (
+		provOrKey C.HCRYPTPROV_OR_NCRYPT_KEY_HANDLE
+		keySpec   C.DWORD
+		mustFree  C.WINBOOL
+	)
+
+	if publicKey == nil {
+		return nil, errors.New("nil public key")
+	}
+
+	if ok := C.CryptAcquireCertificatePrivateKey(certCtx, C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG, nil, &provOrKey, &keySpec, &mustFree); ok == winFalse {
+		return nil, lastError()
+	}
+
+	if mustFree != winTrue {
+		// This shouldn't happen since we're not asking for cached keys.
+		return nil, errors.New("CryptAcquireCertificatePrivateKey set mustFree")
+	}
+
+	if keySpec == C.CERT_NCRYPT_KEY_SPEC {
+		return &winPrivateKey{
+			publicKey: publicKey,
+			cngHandle: C.NCRYPT_KEY_HANDLE(provOrKey),
+		}, nil
+	} else {
+		return &winPrivateKey{
+			publicKey: publicKey,
+			capiProv:  C.HCRYPTPROV(provOrKey),
+			keySpec:   keySpec,
+		}, nil
+	}
+}
+
+// PublicKey implements the crypto.Signer interface.
+func (wpk *winPrivateKey) Public() crypto.PublicKey {
+	return wpk.publicKey
+}
+
+// Sign implements the crypto.Signer interface.
+func (wpk *winPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if wpk.capiProv != 0 {
+		return wpk.capiSignHash(opts.HashFunc(), digest)
+	}
+
+	if wpk.cngHandle != 0 {
+		return wpk.cngSignHash(opts.HashFunc(), digest)
+	}
+
+	return nil, errors.New("bad winPrivateKey")
+}
+
+// cngSignHash signs a digest using the CNG APIs.
+func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
+	switch wpk.publicKey.(type) {
+	case *rsa.PublicKey:
+		return wpk.cngSignHashRSA(hash, digest)
+	case *ecdsa.PublicKey:
+		return wpk.cngSignHashEC(hash, digest)
+	default:
+		return nil, errors.New("unsupported key type")
+	}
+}
+
+// cngSignHash signs a digest using the CNG RSA APIs.
+func (wpk *winPrivateKey) cngSignHashRSA(hash crypto.Hash, digest []byte) ([]byte, error) {
+	if len(digest) != hash.Size() {
+		return nil, errors.New("bad digest for hash")
+	}
+
+	padInfo := C.BCRYPT_PKCS1_PADDING_INFO{}
+
+	switch hash {
+	case crypto.SHA1:
+		padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
+	case crypto.SHA256:
+		padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
+	case crypto.SHA384:
+		padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
+	case crypto.SHA512:
+		padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
+	default:
+		return nil, errors.New("unsupported hash algorithm")
+	}
+
+	var (
+		// input
+		padPtr    = unsafe.Pointer(&padInfo)
+		digestPtr = (*C.BYTE)(&digest[0])
+		digestLen = C.DWORD(len(digest))
+		flags     = C.DWORD(C.BCRYPT_PAD_PKCS1)
+
+		// output
+		sigLen = C.DWORD(0)
+	)
+
+	// get signature length
+	if err := checkStatus(C.NCryptSignHash(wpk.cngHandle, padPtr, digestPtr, digestLen, nil, 0, &sigLen, flags)); err != nil {
+		return nil, err
+	}
+
+	// get signature
+	sig := make([]byte, sigLen)
+	sigPtr := (*C.BYTE)(&sig[0])
+	if err := checkStatus(C.NCryptSignHash(wpk.cngHandle, padPtr, digestPtr, digestLen, sigPtr, sigLen, &sigLen, flags)); err != nil {
+		return nil, err
+	}
+
+	return sig, nil
+}
+
+// cngSignHash signs a digest using the CNG EC APIs.
+func (wpk *winPrivateKey) cngSignHashEC(hash crypto.Hash, digest []byte) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
+
+// capiSignHash signs a digest using the CryptoAPI APIs.
+func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
+
+// Close closes this winPrivateKey.
+func (wpk *winPrivateKey) Close() {
+	if wpk.cngHandle != 0 {
+		C.NCryptFreeObject(C.NCRYPT_HANDLE(wpk.cngHandle))
+	}
+
+	if wpk.capiProv != 0 {
+		C.CryptReleaseContext(wpk.capiProv, 0)
+	}
 }
 
 // winStore is a wrapper around a C.HCERTSTORE.

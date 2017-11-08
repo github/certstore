@@ -106,6 +106,11 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 	return i.crt, nil
 }
 
+// GetSigner implements the Identity iterface.
+func (i *macIdentity) GetSigner() (crypto.Signer, error) {
+	return nil, errors.New("not implemented")
+}
+
 var (
 	secAttrKeyTypeRSA              = cfStringToString(C.kSecAttrKeyTypeRSA)
 	secAttrKeyTypeEC               = cfStringToString(C.kSecAttrKeyTypeEC)

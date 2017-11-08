@@ -34,15 +34,10 @@ import "C"
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
-	"os"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -99,10 +94,6 @@ func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
 
 	der := C.GoBytes(unsafe.Pointer(i.ctx.pbCertEncoded), C.int(i.ctx.cbCertEncoded))
 
-	f, _ := os.Create("eccert.der")
-	f.Write(der)
-	f.Close()
-
 	return x509.ParseCertificate(der)
 }
 
@@ -119,319 +110,6 @@ func (i *winIdentity) PublicKey() crypto.PublicKey {
 
 func (i *winIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return nil, nil
-}
-
-// GetPrivateKey implements the Identity iterface.
-func (i *winIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
-	if err := i._check(); err != nil {
-		return nil, err
-	}
-
-	var (
-		key      C.HCRYPTPROV_OR_NCRYPT_KEY_HANDLE
-		keySpec  C.DWORD
-		mustFree C.WINBOOL
-	)
-
-	if ok := C.CryptAcquireCertificatePrivateKey(i.ctx, C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG|C.CRYPT_ACQUIRE_CACHE_FLAG, nil, &key, &keySpec, &mustFree); ok == winFalse {
-		return nil, lastError()
-	}
-
-	if keySpec == C.CERT_NCRYPT_KEY_SPEC {
-		// The key is a CNG key.
-
-		cngKey := C.NCRYPT_HANDLE(key)
-		if mustFree == winTrue {
-			defer C.NCryptFreeObject(cngKey)
-		}
-
-		return exportNCryptPrivateKey(cngKey)
-
-	} else {
-		// The key is a CryptoAPI provider.
-		fmt.Println("caKey")
-
-		caProv := C.HCRYPTPROV(key)
-		if mustFree == winTrue {
-			defer C.CryptReleaseContext(caProv, 0)
-		}
-
-		var caKey C.HCRYPTKEY
-		if ok := C.CryptGetUserKey(caProv, keySpec, &caKey); ok == winFalse {
-			return nil, lastError()
-		}
-
-		var dataLen C.DWORD
-		if ok := C.CryptExportKey(caKey, 0, C.PRIVATEKEYBLOB, 0, nil, &dataLen); ok == winFalse {
-			return nil, lastError()
-		}
-
-		data := make([]C.BYTE, dataLen)
-		if ok := C.CryptExportKey(caKey, 0, C.PRIVATEKEYBLOB, 0, &data[0], &dataLen); ok == winFalse {
-			return nil, lastError()
-		}
-
-		fmt.Printf("key is %d bytes\n", dataLen)
-	}
-
-	return nil, errors.New("not implemented")
-}
-
-// exportNCryptPrivateKey tries to export a CNG private key.
-func exportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (crypto.PrivateKey, error) {
-	// Try marking the key as exportable
-	var exportPolicy C.DWORD = C.NCRYPT_ALLOW_EXPORT_FLAG | C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
-	if err := ncryptSetProperty(handle, NCRYPT_EXPORT_POLICY_PROPERTY, dwordToByteSlice(exportPolicy)); err != nil {
-		panic(err)
-	}
-
-	// Check that the key *is* exportable.
-	if canExport, err := canExportNCryptPrivateKey(handle); err != nil {
-		return nil, err
-	} else if !canExport {
-		return nil, errors.New("key is marked non-exportable")
-	}
-
-	algo, err := ncryptGetPropertyUTF16(handle, NCRYPT_ALGORITHM_GROUP_PROPERTY)
-	if err != nil {
-		return nil, err
-	}
-
-	switch algo {
-	case "RSA":
-		return ncryptExportRSAKey(handle)
-	case "ECDSA", "ECDH":
-		return ncryptExportECDSAKey(handle)
-	default:
-		return nil, fmt.Errorf("unsupported algorithm '%s'", algo)
-	}
-}
-
-// canExportNCryptPrivateKey checks if a key is marked exportable.
-func canExportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (bool, error) {
-	var (
-		policy C.DWORD = C.NCRYPT_ALLOW_EXPORT_FLAG | C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
-		nBytes C.DWORD
-
-		policyPtr  = (*C.BYTE)(unsafe.Pointer(&policy))
-		policySize = C.DWORD(unsafe.Sizeof(policy))
-	)
-
-	if err := checkStatus(C.NCryptGetProperty(handle, NCRYPT_EXPORT_POLICY_PROPERTY, policyPtr, policySize, &nBytes, 0)); err != nil {
-		return false, err
-	}
-
-	if nBytes != policySize {
-		return false, errors.New("bad output from NCryptGetProperty")
-	}
-
-	canExport := policy&C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG > 0
-
-	return canExport, nil
-}
-
-// ncryptGetProperty gets the given property for an ncrypt object as a UTF16
-// string.
-func ncryptGetPropertyUTF16(handle C.NCRYPT_HANDLE, property C.LPCWSTR) (string, error) {
-	value, err := ncryptGetProperty(handle, property)
-	if err != nil {
-		return "", err
-	}
-
-	if len(value)%2 != 0 || len(value) < 2 {
-		return "", errors.New("bad value length from NCryptGetProperty")
-	}
-
-	if value[len(value)-1] != 0 || value[len(value)-2] != 0 {
-		return "", errors.New("non null terminated string from NCryptGetProperty")
-	}
-
-	// remove trailing \0
-	value = value[:len(value)-2]
-
-	// convert to byte->uint16
-	value16 := make([]uint16, len(value)/2)
-	for i := 0; i < len(value); i += 2 {
-		value16[i/2] = nativeByteOrder.Uint16(value[i : i+2])
-	}
-
-	return string(utf16.Decode(value16)), nil
-}
-
-// ncryptGetProperty gets the given property for an ncrypt object.
-func ncryptGetProperty(handle C.NCRYPT_HANDLE, property C.LPCWSTR) ([]byte, error) {
-	var cbOutput C.DWORD
-	if err := checkStatus(C.NCryptGetProperty(handle, property, nil, 0, &cbOutput, 0)); err != nil {
-		return nil, err
-	}
-
-	var (
-		output    = make([]byte, int(cbOutput))
-		outputPtr = (*C.BYTE)(unsafe.Pointer(&output[0]))
-	)
-	if err := checkStatus(C.NCryptGetProperty(handle, property, outputPtr, cbOutput, &cbOutput, 0)); err != nil {
-		return nil, err
-	}
-
-	return output, nil
-}
-
-// ncryptSetProperty sets the given property for an ncrypt object.
-func ncryptSetProperty(handle C.NCRYPT_HANDLE, property C.LPCWSTR, value []byte) error {
-	var (
-		valuePtr  = (*C.BYTE)(unsafe.Pointer(&value[0]))
-		valueSize = C.DWORD(len(value))
-	)
-
-	return checkStatus(C.NCryptSetProperty(handle, property, valuePtr, valueSize, 0))
-}
-
-// ncryptExportRSAKey exports an RSA key.
-func ncryptExportRSAKey(handle C.NCRYPT_HANDLE) (*rsa.PrivateKey, error) {
-	blob, err := ncryptExportKeyBlob(handle, BCRYPT_RSAFULLPRIVATE_BLOB)
-	if err != nil {
-		return nil, err
-	}
-
-	hdrLen := int(unsafe.Sizeof(C.BCRYPT_RSAKEY_BLOB{}))
-	if len(blob) < hdrLen {
-		return nil, errors.New("bad output from NCryptExportKey")
-	}
-
-	hdr := (*C.BCRYPT_RSAKEY_BLOB)(unsafe.Pointer(&blob[0]))
-
-	var (
-		publicExponentOffset = hdrLen
-		publicExponentLen    = int(hdr.cbPublicExp)
-
-		modulusOffset = publicExponentOffset + publicExponentLen
-		modulusLen    = int(hdr.cbModulus)
-
-		prime1Offset = modulusOffset + modulusLen
-		prime1Len    = int(hdr.cbPrime1)
-
-		prime2Offset = prime1Offset + prime1Len
-		prime2Len    = int(hdr.cbPrime2)
-
-		exponent1Offset = prime2Offset + prime2Len
-		exponent1Len    = int(hdr.cbPrime1)
-
-		exponent2Offset = exponent1Offset + exponent1Len
-		exponent2Len    = int(hdr.cbPrime2)
-
-		coefficientOffset = exponent2Offset + exponent2Len
-		coefficientLen    = int(hdr.cbPrime1)
-
-		privateExponentOffset = coefficientOffset + coefficientLen
-		privateExponentLen    = int(hdr.cbModulus)
-	)
-
-	if len(blob) < privateExponentOffset+privateExponentLen {
-		return nil, errors.New("bad output from NCryptExportKey")
-	}
-
-	e := new(big.Int)
-	e.SetBytes(blob[publicExponentOffset : publicExponentOffset+publicExponentLen])
-
-	n := new(big.Int)
-	n.SetBytes(blob[modulusOffset : modulusOffset+modulusLen])
-
-	p := new(big.Int)
-	p.SetBytes(blob[prime1Offset : prime1Offset+prime1Len])
-
-	q := new(big.Int)
-	q.SetBytes(blob[prime2Offset : prime2Offset+prime2Len])
-
-	d := new(big.Int)
-	d.SetBytes(blob[privateExponentOffset : privateExponentOffset+privateExponentLen])
-
-	k := &rsa.PrivateKey{
-		PublicKey: rsa.PublicKey{E: int(e.Int64()), N: n},
-		Primes:    []*big.Int{p, q},
-		D:         d,
-	}
-
-	if err := k.Validate(); err != nil {
-		return nil, err
-	}
-
-	return k, nil
-}
-
-// ncryptExportECDSAKey exports an ECDSA key.
-func ncryptExportECDSAKey(handle C.NCRYPT_HANDLE) (*ecdsa.PrivateKey, error) {
-	blob, err := ncryptExportKeyBlob(handle, BCRYPT_ECCPRIVATE_BLOB)
-	if err != nil {
-		return nil, err
-	}
-
-	hdrLen := int(unsafe.Sizeof(C.BCRYPT_ECCKEY_BLOB{}))
-	if len(blob) < hdrLen {
-		return nil, errors.New("bad output from NCryptExportKey")
-	}
-
-	hdr := (*C.BCRYPT_ECCKEY_BLOB)(unsafe.Pointer(&blob[0]))
-
-	var curve elliptic.Curve
-
-	switch hdr.dwMagic {
-	case C.BCRYPT_ECDSA_PRIVATE_P256_MAGIC, C.BCRYPT_ECDH_PRIVATE_P256_MAGIC:
-		curve = elliptic.P256()
-	case C.BCRYPT_ECDSA_PRIVATE_P384_MAGIC, C.BCRYPT_ECDH_PRIVATE_P384_MAGIC:
-		curve = elliptic.P384()
-	case C.BCRYPT_ECDSA_PRIVATE_P521_MAGIC, C.BCRYPT_ECDH_PRIVATE_P521_MAGIC:
-		curve = elliptic.P521()
-	default:
-		return nil, fmt.Errorf("unknown elliptic key %X", int(hdr.dwMagic))
-	}
-
-	var (
-		kLen    = int(hdr.cbKey)
-		xOffset = hdrLen
-		yOffset = xOffset + kLen
-		dOffset = yOffset + kLen
-	)
-
-	if len(blob) < dOffset+kLen {
-		return nil, errors.New("bad output from NCryptExportKey")
-	}
-
-	x := new(big.Int)
-	x.SetBytes(blob[xOffset : xOffset+kLen])
-
-	y := new(big.Int)
-	y.SetBytes(blob[yOffset : yOffset+kLen])
-
-	d := new(big.Int)
-	d.SetBytes(blob[dOffset : dOffset+kLen])
-
-	k := &ecdsa.PrivateKey{
-		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
-		D:         d,
-	}
-
-	return k, nil
-}
-
-// ncryptExportKeyBlob exports a key with the given format.
-func ncryptExportKeyBlob(handle C.NCRYPT_HANDLE, format C.LPCWSTR) ([]byte, error) {
-	key := C.NCRYPT_KEY_HANDLE(handle)
-
-	var dataLen C.DWORD
-	if err := checkStatus(C.NCryptExportKey(key, 0, format, nil, nil, 0, &dataLen, 0)); err != nil {
-		return nil, err
-	}
-
-	var (
-		data    = make([]byte, dataLen)
-		dataPtr = (*C.BYTE)(&data[0])
-	)
-
-	if err := checkStatus(C.NCryptExportKey(key, 0, format, nil, dataPtr, dataLen, &dataLen, 0)); err != nil {
-		return nil, err
-	}
-
-	return data, nil
 }
 
 // Close implements the Identity iterface.
@@ -463,7 +141,6 @@ func (i *winIdentity) _check() error {
 type winStore struct {
 	store  C.HCERTSTORE
 	prev   C.PCCERT_CONTEXT
-	alg    C.BCRYPT_ALG_HANDLE
 	err    error
 	closed bool
 }
@@ -479,7 +156,7 @@ func openMyCertStore() (*winStore, error) {
 		return nil, lastError()
 	}
 
-	return newWinStore(store)
+	return &winStore{store: store}, nil
 }
 
 // importCertStore imports certificates and private keys from PFX (PKCS12) data.
@@ -500,18 +177,7 @@ func importCertStore(data []byte, password string) (*winStore, error) {
 		return nil, lastError()
 	}
 
-	return newWinStore(store)
-}
-
-func newWinStore(store C.HCERTSTORE) (*winStore, error) {
-	var algHandle C.BCRYPT_ALG_HANDLE
-
-	if status := C.BCryptOpenAlgorithmProvider(&algHandle, BCRYPT_ECDSA_ALGORITHM, nil, 0); status != 0 {
-		C.CertCloseStore(store, 0)
-		return nil, fmt.Errorf("Error opening ECDSA algorithm provider (%d)", int(status))
-	}
-
-	return &winStore{store: store, alg: algHandle}, nil
+	return &winStore{store: store}, nil
 }
 
 // nextCert starts or continues an iteration through this store's certificates.
@@ -587,10 +253,6 @@ func (s *winStore) Close() {
 		C.CertFreeCertificateContext(s.prev)
 	}
 
-	if s.alg != nil {
-		C.BCryptCloseAlgorithmProvider(s.alg, 0)
-	}
-
 	C.CertCloseStore(s.store, 0)
 
 	s.closed = true
@@ -658,10 +320,4 @@ func stringToUTF16(s string) C.LPCWSTR {
 	copy(pp[:], wstr)
 
 	return (C.LPCWSTR)(p)
-}
-
-func dwordToByteSlice(w C.DWORD) []byte {
-	b := make([]byte, 4)
-	nativeByteOrder.PutUint32(b, uint32(w))
-	return b
 }

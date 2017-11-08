@@ -1,7 +1,9 @@
 package main
 
 import (
-	"fmt"
+	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
 )
 
 func main() {
@@ -11,11 +13,21 @@ func main() {
 	}
 
 	for _, ident := range idents {
-		cert, err := ident.GetCertificate()
+		_, err := ident.GetCertificate()
 		if err != nil {
 			panic(err)
 		}
 
-		fmt.Printf("CN=%s\n", cert.Subject.CommonName)
+		signer, err := ident.GetSigner()
+		if err != nil {
+			panic(err)
+		}
+
+		msg := []byte("hello, world!")
+		digest := sha256.Sum256(msg)
+
+		if _, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256); err != nil {
+			panic(err)
+		}
 	}
 }

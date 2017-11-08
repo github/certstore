@@ -37,9 +37,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -217,47 +219,40 @@ func (wpk *winPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 
 // cngSignHash signs a digest using the CNG APIs.
 func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
-	switch wpk.publicKey.(type) {
-	case *rsa.PublicKey:
-		return wpk.cngSignHashRSA(hash, digest)
-	case *ecdsa.PublicKey:
-		return wpk.cngSignHashEC(hash, digest)
-	default:
-		return nil, errors.New("unsupported key type")
-	}
-}
-
-// cngSignHash signs a digest using the CNG RSA APIs.
-func (wpk *winPrivateKey) cngSignHashRSA(hash crypto.Hash, digest []byte) ([]byte, error) {
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
 	}
 
-	padInfo := C.BCRYPT_PKCS1_PADDING_INFO{}
-
-	switch hash {
-	case crypto.SHA1:
-		padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
-	case crypto.SHA256:
-		padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
-	case crypto.SHA384:
-		padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
-	case crypto.SHA512:
-		padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
-	default:
-		return nil, errors.New("unsupported hash algorithm")
-	}
-
 	var (
 		// input
-		padPtr    = unsafe.Pointer(&padInfo)
+		padPtr    = unsafe.Pointer(nil)
 		digestPtr = (*C.BYTE)(&digest[0])
 		digestLen = C.DWORD(len(digest))
-		flags     = C.DWORD(C.BCRYPT_PAD_PKCS1)
+		flags     = C.DWORD(0)
 
 		// output
 		sigLen = C.DWORD(0)
 	)
+
+	// setup pkcs1v1.5 padding for RSA
+	if _, isRSA := wpk.publicKey.(*rsa.PublicKey); isRSA {
+		flags |= C.BCRYPT_PAD_PKCS1
+		padInfo := C.BCRYPT_PKCS1_PADDING_INFO{}
+		padPtr = unsafe.Pointer(&padInfo)
+
+		switch hash {
+		case crypto.SHA1:
+			padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
+		case crypto.SHA256:
+			padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
+		case crypto.SHA384:
+			padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
+		case crypto.SHA512:
+			padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
+		default:
+			return nil, errors.New("unsupported hash algorithm")
+		}
+	}
 
 	// get signature length
 	if err := checkStatus(C.NCryptSignHash(wpk.cngHandle, padPtr, digestPtr, digestLen, nil, 0, &sigLen, flags)); err != nil {
@@ -269,6 +264,22 @@ func (wpk *winPrivateKey) cngSignHashRSA(hash crypto.Hash, digest []byte) ([]byt
 	sigPtr := (*C.BYTE)(&sig[0])
 	if err := checkStatus(C.NCryptSignHash(wpk.cngHandle, padPtr, digestPtr, digestLen, sigPtr, sigLen, &sigLen, flags)); err != nil {
 		return nil, err
+	}
+
+	// CNG returns a raw ECDSA signature, but we wan't ASN.1 DER encoding.
+	if _, isEC := wpk.publicKey.(*ecdsa.PublicKey); isEC {
+		if len(sig)%2 != 0 {
+			return nil, errors.New("bad ecdsa signature from CNG")
+		}
+
+		type ecdsaSignature struct {
+			R, S *big.Int
+		}
+
+		r := new(big.Int).SetBytes(sig[:len(sig)/2])
+		s := new(big.Int).SetBytes(sig[len(sig)/2:])
+
+		return asn1.Marshal(ecdsaSignature{r, s})
 	}
 
 	return sig, nil

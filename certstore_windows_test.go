@@ -131,4 +131,66 @@ func TestWindowsEC(t *testing.T) {
 	if crt.Subject.CommonName != "Ben Toews" {
 		t.Fatalf("expected CN='Ben Toews'. Got CN='%s'", crt.Subject.CommonName)
 	}
+
+	signer, err := ident.GetSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SHA1WithRSA
+	msg := []byte("hello world")
+	digest1 := sha1.Sum(msg)
+
+	sig, err := signer.Sign(rand.Reader, digest1[:], crypto.SHA1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = crt.CheckSignature(x509.ECDSAWithSHA1, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+
+	// SHA256WithRSA
+	digest256 := sha256.Sum256(msg)
+
+	sig, err = signer.Sign(rand.Reader, digest256[:], crypto.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = crt.CheckSignature(x509.ECDSAWithSHA256, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+
+	// SHA384WithRSA
+	digest384 := sha512.Sum384(msg)
+
+	sig, err = signer.Sign(rand.Reader, digest384[:], crypto.SHA384)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = crt.CheckSignature(x509.ECDSAWithSHA384, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+
+	// SHA512WithRSA
+	digest512 := sha512.Sum512(msg)
+
+	sig, err = signer.Sign(rand.Reader, digest512[:], crypto.SHA512)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = crt.CheckSignature(x509.ECDSAWithSHA512, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unimplemented hash algo
+	digestmd5 := md5.Sum(msg)
+
+	_, err = signer.Sign(rand.Reader, digestmd5[:], crypto.SHA512)
+	if err == nil {
+		t.Fatal("expected an error using md5 digest")
+	}
 }

@@ -9,26 +9,6 @@ package main
 #include <winerror.h>
 #include <stdio.h>
 
-// Go complains about LPCWSTR constants not being defined...
-LPCWSTR ncryptExportPolicyProperty() {
-	return NCRYPT_EXPORT_POLICY_PROPERTY;
-}
-
-// Go complains about LPCWSTR constants not being defined...
-LPCWSTR bcryptRSAFullPrivateBlob() {
-	return BCRYPT_RSAFULLPRIVATE_BLOB;
-}
-
-// Go complains about LPCWSTR constants not being defined...
-LPCWSTR bcryptECCPrivateBlob() {
-	return BCRYPT_ECCPRIVATE_BLOB;
-}
-
-// Go complains about LPCWSTR constants not being defined...
-LPCWSTR ncryptAlgorithmGroupProperty() {
-  return NCRYPT_ALGORITHM_GROUP_PROPERTY;
-}
-
 char* errMsg(DWORD code) {
 	char* lpMsgBuf;
 	DWORD ret = 0;
@@ -60,6 +40,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"unicode/utf16"
@@ -125,6 +106,21 @@ func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
 	return x509.ParseCertificate(der)
 }
 
+// PublicKey implements the crypto.Signer interface.
+func (i *winIdentity) PublicKey() crypto.PublicKey {
+	cert, err := i.GetCertificate()
+	if err != nil {
+		fmt.Printf("Error getting identity certificate: %s", err.Error())
+		return nil
+	}
+
+	return cert.PublicKey
+}
+
+func (i *winIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return nil, nil
+}
+
 // GetPrivateKey implements the Identity iterface.
 func (i *winIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
 	if err := i._check(); err != nil {
@@ -183,13 +179,20 @@ func (i *winIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
 
 // exportNCryptPrivateKey tries to export a CNG private key.
 func exportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (crypto.PrivateKey, error) {
+	// Try marking the key as exportable
+	var exportPolicy C.DWORD = C.NCRYPT_ALLOW_EXPORT_FLAG | C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
+	if err := ncryptSetProperty(handle, NCRYPT_EXPORT_POLICY_PROPERTY, dwordToByteSlice(exportPolicy)); err != nil {
+		panic(err)
+	}
+
+	// Check that the key *is* exportable.
 	if canExport, err := canExportNCryptPrivateKey(handle); err != nil {
 		return nil, err
 	} else if !canExport {
 		return nil, errors.New("key is marked non-exportable")
 	}
 
-	algo, err := ncryptPrivateKeyAlgorithmGroup(handle)
+	algo, err := ncryptGetPropertyUTF16(handle, NCRYPT_ALGORITHM_GROUP_PROPERTY)
 	if err != nil {
 		return nil, err
 	}
@@ -210,16 +213,11 @@ func canExportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (bool, error) {
 		policy C.DWORD = C.NCRYPT_ALLOW_EXPORT_FLAG | C.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
 		nBytes C.DWORD
 
-		property   = C.ncryptExportPolicyProperty()
 		policyPtr  = (*C.BYTE)(unsafe.Pointer(&policy))
 		policySize = C.DWORD(unsafe.Sizeof(policy))
 	)
 
-	if err := checkStatus(C.NCryptSetProperty(handle, property, policyPtr, policySize, 0)); err != nil {
-		fmt.Println(err)
-	}
-
-	if err := checkStatus(C.NCryptGetProperty(handle, property, policyPtr, policySize, &nBytes, 0)); err != nil {
+	if err := checkStatus(C.NCryptGetProperty(handle, NCRYPT_EXPORT_POLICY_PROPERTY, policyPtr, policySize, &nBytes, 0)); err != nil {
 		return false, err
 	}
 
@@ -232,34 +230,65 @@ func canExportNCryptPrivateKey(handle C.NCRYPT_HANDLE) (bool, error) {
 	return canExport, nil
 }
 
-// ncryptPrivateKeyAlgorithmGroup gets the algorithm group for the given key.
-func ncryptPrivateKeyAlgorithmGroup(handle C.NCRYPT_HANDLE) (string, error) {
-	// "ECDSA" is longest option. +1 for \0. *2 for utf16
-	const maxAlgo = C.DWORD(12)
-
-	var (
-		algo   [maxAlgo]uint16
-		nBytes C.DWORD
-
-		property = C.ncryptAlgorithmGroupProperty()
-		algoPtr  = (*C.BYTE)(unsafe.Pointer(&algo[0]))
-	)
-
-	if err := checkStatus(C.NCryptGetProperty(handle, property, algoPtr, maxAlgo, &nBytes, 0)); err != nil {
+// ncryptGetProperty gets the given property for an ncrypt object as a UTF16
+// string.
+func ncryptGetPropertyUTF16(handle C.NCRYPT_HANDLE, property C.LPCWSTR) (string, error) {
+	value, err := ncryptGetProperty(handle, property)
+	if err != nil {
 		return "", err
 	}
 
-	if nBytes%2 != 0 || nBytes < 2 {
-		return "", errors.New("bad output from NCryptGetProperty")
+	if len(value)%2 != 0 || len(value) < 2 {
+		return "", errors.New("bad value length from NCryptGetProperty")
 	}
 
-	nRunes := nBytes/2 - 1 // /2 for utf16. -1 for \0
-	return string(utf16.Decode(algo[:nRunes])), nil
+	if value[len(value)-1] != 0 || value[len(value)-2] != 0 {
+		return "", errors.New("non null terminated string from NCryptGetProperty")
+	}
+
+	// remove trailing \0
+	value = value[:len(value)-2]
+
+	// convert to byte->uint16
+	value16 := make([]uint16, len(value)/2)
+	for i := 0; i < len(value); i += 2 {
+		value16[i/2] = nativeByteOrder.Uint16(value[i : i+2])
+	}
+
+	return string(utf16.Decode(value16)), nil
+}
+
+// ncryptGetProperty gets the given property for an ncrypt object.
+func ncryptGetProperty(handle C.NCRYPT_HANDLE, property C.LPCWSTR) ([]byte, error) {
+	var cbOutput C.DWORD
+	if err := checkStatus(C.NCryptGetProperty(handle, property, nil, 0, &cbOutput, 0)); err != nil {
+		return nil, err
+	}
+
+	var (
+		output    = make([]byte, int(cbOutput))
+		outputPtr = (*C.BYTE)(unsafe.Pointer(&output[0]))
+	)
+	if err := checkStatus(C.NCryptGetProperty(handle, property, outputPtr, cbOutput, &cbOutput, 0)); err != nil {
+		return nil, err
+	}
+
+	return output, nil
+}
+
+// ncryptSetProperty sets the given property for an ncrypt object.
+func ncryptSetProperty(handle C.NCRYPT_HANDLE, property C.LPCWSTR, value []byte) error {
+	var (
+		valuePtr  = (*C.BYTE)(unsafe.Pointer(&value[0]))
+		valueSize = C.DWORD(len(value))
+	)
+
+	return checkStatus(C.NCryptSetProperty(handle, property, valuePtr, valueSize, 0))
 }
 
 // ncryptExportRSAKey exports an RSA key.
 func ncryptExportRSAKey(handle C.NCRYPT_HANDLE) (*rsa.PrivateKey, error) {
-	blob, err := ncryptExportKeyBlob(handle, C.bcryptRSAFullPrivateBlob())
+	blob, err := ncryptExportKeyBlob(handle, BCRYPT_RSAFULLPRIVATE_BLOB)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +360,7 @@ func ncryptExportRSAKey(handle C.NCRYPT_HANDLE) (*rsa.PrivateKey, error) {
 
 // ncryptExportECDSAKey exports an ECDSA key.
 func ncryptExportECDSAKey(handle C.NCRYPT_HANDLE) (*ecdsa.PrivateKey, error) {
-	blob, err := ncryptExportKeyBlob(handle, C.bcryptECCPrivateBlob())
+	blob, err := ncryptExportKeyBlob(handle, BCRYPT_ECCPRIVATE_BLOB)
 	if err != nil {
 		return nil, err
 	}
@@ -434,6 +463,7 @@ func (i *winIdentity) _check() error {
 type winStore struct {
 	store  C.HCERTSTORE
 	prev   C.PCCERT_CONTEXT
+	alg    C.BCRYPT_ALG_HANDLE
 	err    error
 	closed bool
 }
@@ -444,12 +474,12 @@ func openMyCertStore() (*winStore, error) {
 	storeName := C.CString("MY")
 	defer C.free(unsafe.Pointer(storeName))
 
-	s := C.CertOpenSystemStore(0, (*C.CHAR)(storeName))
-	if s == nil {
+	store := C.CertOpenSystemStore(0, (*C.CHAR)(storeName))
+	if store == nil {
 		return nil, lastError()
 	}
 
-	return &winStore{store: s}, nil
+	return newWinStore(store)
 }
 
 // importCertStore imports certificates and private keys from PFX (PKCS12) data.
@@ -470,7 +500,18 @@ func importCertStore(data []byte, password string) (*winStore, error) {
 		return nil, lastError()
 	}
 
-	return &winStore{store: store}, nil
+	return newWinStore(store)
+}
+
+func newWinStore(store C.HCERTSTORE) (*winStore, error) {
+	var algHandle C.BCRYPT_ALG_HANDLE
+
+	if status := C.BCryptOpenAlgorithmProvider(&algHandle, BCRYPT_ECDSA_ALGORITHM, nil, 0); status != 0 {
+		C.CertCloseStore(store, 0)
+		return nil, fmt.Errorf("Error opening ECDSA algorithm provider (%d)", int(status))
+	}
+
+	return &winStore{store: store, alg: algHandle}, nil
 }
 
 // nextCert starts or continues an iteration through this store's certificates.
@@ -546,6 +587,10 @@ func (s *winStore) Close() {
 		C.CertFreeCertificateContext(s.prev)
 	}
 
+	if s.alg != nil {
+		C.BCryptCloseAlgorithmProvider(s.alg, 0)
+	}
+
 	C.CertCloseStore(s.store, 0)
 
 	s.closed = true
@@ -613,4 +658,10 @@ func stringToUTF16(s string) C.LPCWSTR {
 	copy(pp[:], wstr)
 
 	return (C.LPCWSTR)(p)
+}
+
+func dwordToByteSlice(w C.DWORD) []byte {
+	b := make([]byte, 4)
+	nativeByteOrder.PutUint32(b, uint32(w))
+	return b
 }

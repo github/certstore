@@ -117,8 +117,8 @@ var (
 	secAttrKeyTypeECSECPrimeRandom = cfStringToString(C.kSecAttrKeyTypeECSECPrimeRandom)
 )
 
-// GetPrivateKey implements the Identity iterface.
-func (i *macIdentity) GetPrivateKey() (crypto.PrivateKey, error) {
+// getPrivateKey implements the Identity iterface.
+func (i *macIdentity) getPrivateKey() (crypto.PrivateKey, error) {
 	if i.closed {
 		return nil, errors.New("identity closed")
 	}

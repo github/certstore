@@ -51,10 +51,21 @@ const (
 	winFalse C.WINBOOL = 0
 )
 
+// winAPIFlag specifies the flags that should be passed to
+// CryptAcquireCertificatePrivateKey. This impacts whether the CryptoAPI or CNG
+// API will be used.
+//
+// Possible values are:
+//   0x00000000 —                                      — Only use CryptoAPI.
+//   0x00010000 — CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG  — Prefer CryptoAPI.
+//   0x00020000 — CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG — Prefer CNG.
+//   0x00040000 — CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG   — Only uyse CNG.
+var winAPIFlag C.DWORD = C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG
+
 // winIdentity implements the Identity iterface.
 type winIdentity struct {
 	ctx    C.PCCERT_CONTEXT
-	signer crypto.Signer
+	signer *winPrivateKey
 	closed bool
 }
 
@@ -133,6 +144,10 @@ func (i *winIdentity) Close() {
 		return
 	}
 
+	if i.signer != nil {
+		i.signer.Close()
+	}
+
 	C.CertFreeCertificateContext(i.ctx)
 }
 
@@ -176,7 +191,7 @@ func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*wi
 		return nil, errors.New("nil public key")
 	}
 
-	if ok := C.CryptAcquireCertificatePrivateKey(certCtx, C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG, nil, &provOrKey, &keySpec, &mustFree); ok == winFalse {
+	if ok := C.CryptAcquireCertificatePrivateKey(certCtx, winAPIFlag, nil, &provOrKey, &keySpec, &mustFree); ok == winFalse {
 		return nil, lastError()
 	}
 
@@ -285,14 +300,81 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 	return sig, nil
 }
 
-// cngSignHash signs a digest using the CNG EC APIs.
-func (wpk *winPrivateKey) cngSignHashEC(hash crypto.Hash, digest []byte) ([]byte, error) {
-	return nil, errors.New("not implemented")
-}
-
 // capiSignHash signs a digest using the CryptoAPI APIs.
 func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
-	return nil, errors.New("not implemented")
+	if len(digest) != hash.Size() {
+		return nil, errors.New("bad digest for hash")
+	}
+
+	// Figure out which CryptoAPI hash algorithm we're using.
+	var hash_alg C.ALG_ID
+
+	switch hash {
+	case crypto.SHA1:
+		hash_alg = C.CALG_SHA1
+	case crypto.SHA256:
+		hash_alg = C.CALG_SHA_256
+	case crypto.SHA384:
+		hash_alg = C.CALG_SHA_384
+	case crypto.SHA512:
+		hash_alg = C.CALG_SHA_512
+	default:
+		return nil, errors.New("unsupported hash algorithm")
+	}
+
+	// Instantiate a CryptoAPI hash object.
+	var chash C.HCRYPTHASH
+
+	if ok := C.CryptCreateHash(C.HCRYPTPROV(wpk.capiProv), hash_alg, 0, 0, &chash); ok == winFalse {
+		return nil, lastError()
+	}
+	defer C.CryptDestroyHash(chash)
+
+	// Make sure the hash size matches.
+	var (
+		hashSize    C.DWORD
+		hashSizePtr = (*C.BYTE)(unsafe.Pointer(&hashSize))
+		hashSizeLen = C.DWORD(unsafe.Sizeof(hashSize))
+	)
+
+	if ok := C.CryptGetHashParam(chash, C.HP_HASHSIZE, hashSizePtr, &hashSizeLen, 0); ok == winFalse {
+		return nil, lastError()
+	}
+
+	if hash.Size() != int(hashSize) {
+		return nil, errors.New("invalid CryptoAPI hash")
+	}
+
+	// Put our digest into the hash object.
+	digestPtr := (*C.BYTE)(unsafe.Pointer(&digest[0]))
+	if ok := C.CryptSetHashParam(chash, C.HP_HASHVAL, digestPtr, 0); ok == winFalse {
+		return nil, lastError()
+	}
+
+	// Get signature length.
+	var sigLen C.DWORD
+
+	if ok := C.CryptSignHash(chash, wpk.keySpec, nil, 0, nil, &sigLen); ok == winFalse {
+		return nil, lastError()
+	}
+
+	// Get signature
+	var (
+		sig    = make([]byte, int(sigLen))
+		sigPtr = (*C.BYTE)(unsafe.Pointer(&sig[0]))
+	)
+
+	if ok := C.CryptSignHash(chash, wpk.keySpec, nil, 0, sigPtr, &sigLen); ok == winFalse {
+		return nil, lastError()
+	}
+
+	// Signature is little endian, but we want big endian. Reverse it.
+	for i := len(sig)/2 - 1; i >= 0; i-- {
+		opp := len(sig) - 1 - i
+		sig[i], sig[opp] = sig[opp], sig[i]
+	}
+
+	return sig, nil
 }
 
 // Close closes this winPrivateKey.

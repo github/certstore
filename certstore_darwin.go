@@ -38,6 +38,9 @@ func FindIdentities() ([]Identity, error) {
 		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
 		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
 	})
+	if query == nil {
+		return nil, errors.New("error creating CFDictionary")
+	}
 	defer C.CFRelease(C.CFTypeRef(query))
 
 	var absResult C.CFTypeRef
@@ -110,6 +113,14 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 
 // GetSigner implements the Identity iterface.
 func (i *macIdentity) GetSigner() (crypto.Signer, error) {
+	if i.closed {
+		return nil, errors.New("identity closed")
+	}
+
+	if i.ref == nil {
+		return nil, errors.New("nil identity ref")
+	}
+
 	// pre-load the certificate so Public() is less likely to return nil
 	// unexpectedly.
 	if _, err := i.GetCertificate(); err != nil {
@@ -117,6 +128,40 @@ func (i *macIdentity) GetSigner() (crypto.Signer, error) {
 	}
 
 	return i, nil
+}
+
+// Destroy implements the Identity iterface.
+func (i *macIdentity) Destroy() error {
+	if i.closed {
+		return errors.New("identity closed")
+	}
+
+	if i.ref == nil {
+		return errors.New("nil identity ref")
+	}
+
+	itemList := []C.SecIdentityRef{i.ref}
+	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
+	citemList := C.CFArrayCreate(nil, itemListPtr, 1, nil)
+	if citemList == nil {
+		return errors.New("error creating CFArray")
+	}
+	defer C.CFRelease(C.CFTypeRef(citemList))
+
+	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecMatchItemList): C.CFTypeRef(citemList),
+	})
+	if query == nil {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(query))
+
+	if err := osStatusError(C.SecItemDelete(query)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Close implements the Identity iterface.

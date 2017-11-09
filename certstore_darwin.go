@@ -9,18 +9,20 @@ package main
 import "C"
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"unsafe"
 )
 
 // macIdentity implements the Identity iterface.
 type macIdentity struct {
 	ref    C.SecIdentityRef
+	kref   C.SecKeyRef
 	crt    *x509.Certificate
-	key    crypto.PrivateKey
 	closed bool
 }
 
@@ -106,19 +108,101 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 	return i.crt, nil
 }
 
-// GetSigner implements the Identity iterface.
-func (i *macIdentity) GetSigner() (crypto.Signer, error) {
-	return nil, errors.New("not implemented")
+// Public implements the crypto.Signer iterface.
+func (i *macIdentity) Public() crypto.PublicKey {
+	cert, err := i.GetCertificate()
+	if err != nil {
+		return nil
+	}
+
+	return cert.PublicKey
 }
 
-var (
-	secAttrKeyTypeRSA              = cfStringToString(C.kSecAttrKeyTypeRSA)
-	secAttrKeyTypeEC               = cfStringToString(C.kSecAttrKeyTypeEC)
-	secAttrKeyTypeECSECPrimeRandom = cfStringToString(C.kSecAttrKeyTypeECSECPrimeRandom)
-)
+// Sign implements the crypto.Signer iterface.
+func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	hash := opts.HashFunc()
 
-// getPrivateKey implements the Identity iterface.
-func (i *macIdentity) getPrivateKey() (crypto.PrivateKey, error) {
+	if len(digest) != hash.Size() {
+		return nil, errors.New("bad digest for hash")
+	}
+
+	kref, err := i.getKeyRef()
+	if err != nil {
+		return nil, err
+	}
+
+	cdigest, err := bytesToCFData(digest)
+	if err != nil {
+		return nil, err
+	}
+
+	algo, err := i.getAlgo(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	// sign the digest
+	var cerr C.CFErrorRef
+	csig := C.SecKeyCreateSignature(kref, algo, cdigest, &cerr)
+
+	if err := cfErrorError(cerr); err != nil {
+		return nil, err
+	}
+
+	if csig == nil {
+		return nil, errors.New("nil signature from SecKeyCreateSignature")
+	}
+
+	defer C.CFRelease(C.CFTypeRef(csig))
+
+	sig := cfDataToBytes(csig)
+
+	return sig, nil
+}
+
+// getAlgo decides which algorithm to use with this key type for the given hash.
+func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err error) {
+	var crt *x509.Certificate
+	if crt, err = i.GetCertificate(); err != nil {
+		return
+	}
+
+	switch crt.PublicKey.(type) {
+	case *ecdsa.PublicKey:
+		switch hash {
+		case crypto.SHA1:
+			algo = C.kSecKeyAlgorithmECDSASignatureDigestX962SHA1
+		case crypto.SHA256:
+			algo = C.kSecKeyAlgorithmECDSASignatureDigestX962SHA256
+		case crypto.SHA384:
+			algo = C.kSecKeyAlgorithmECDSASignatureDigestX962SHA384
+		case crypto.SHA512:
+			algo = C.kSecKeyAlgorithmECDSASignatureDigestX962SHA512
+		default:
+			err = errors.New("unsupported hash algorithm")
+		}
+	case *rsa.PublicKey:
+		switch hash {
+		case crypto.SHA1:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1
+		case crypto.SHA256:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256
+		case crypto.SHA384:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384
+		case crypto.SHA512:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512
+		default:
+			err = errors.New("unsupported hash algorithm")
+		}
+	default:
+		err = errors.New("unsupported key type")
+	}
+
+	return
+}
+
+// getKeyRef gets the SecKeyRef for this identity's pricate key.
+func (i *macIdentity) getKeyRef() (C.SecKeyRef, error) {
 	if i.closed {
 		return nil, errors.New("identity closed")
 	}
@@ -127,69 +211,29 @@ func (i *macIdentity) getPrivateKey() (crypto.PrivateKey, error) {
 		return nil, errors.New("nil identity ref")
 	}
 
-	if i.key != nil {
-		return i.key, nil
+	if i.kref != nil {
+		return i.kref, nil
 	}
 
 	var keyRef C.SecKeyRef
 	if err := osStatusError(C.SecIdentityCopyPrivateKey(i.ref, &keyRef)); err != nil {
 		return nil, err
 	}
-	defer C.CFRelease(C.CFTypeRef(keyRef))
 
-	passphrase := C.CFTypeRef(stringToCFString("asdf"))
-	defer C.CFRelease(passphrase)
+	i.kref = keyRef
 
-	params := &C.SecItemImportExportKeyParameters{
-		passphrase: passphrase,
-		version:    C.SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION,
-	}
+	return i.kref, nil
+}
 
-	var derRef C.CFDataRef
-	if err := osStatusError(C.SecItemExport(C.CFTypeRef(keyRef), C.kSecFormatWrappedOpenSSL, 0, params, &derRef)); err != nil {
+// GetSigner implements the Identity iterface.
+func (i *macIdentity) GetSigner() (crypto.Signer, error) {
+	// pre-load the certificate so Public() is less likely to return nil
+	// unexpectedly.
+	if _, err := i.GetCertificate(); err != nil {
 		return nil, err
 	}
 
-	pemBytes := cfDataToBytes(derRef)
-	blk, rest := pem.Decode(pemBytes)
-	if len(rest) > 0 {
-		return nil, errors.New("error decoding PEM private key")
-	}
-
-	der, err := x509.DecryptPEMBlock(blk, []byte("asdf"))
-	if err != nil {
-		return nil, err
-	}
-
-	attrs := C.SecKeyCopyAttributes(keyRef)
-	if attrs == nil {
-		return nil, errors.New("error getting private key attributes from keychain")
-	}
-	defer C.CFRelease(C.CFTypeRef(attrs))
-
-	cfAlgo := C.CFDictionaryGetValue(attrs, unsafe.Pointer(C.kSecAttrKeyType))
-	if cfAlgo == nil {
-		return nil, errors.New("error getting private key type from keychain")
-	}
-
-	var key crypto.PrivateKey
-
-	switch cfStringToString(C.CFStringRef(cfAlgo)) {
-	case secAttrKeyTypeRSA:
-		key, err = x509.ParsePKCS1PrivateKey(der)
-	case secAttrKeyTypeEC, secAttrKeyTypeECSECPrimeRandom:
-		key, err = x509.ParseECPrivateKey(der)
-	default:
-		return nil, errors.New("unkown private key type")
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	i.key = key
-
-	return i.key, nil
+	return i, nil
 }
 
 // Close implements the Identity iterface.
@@ -202,18 +246,11 @@ func (i *macIdentity) Close() {
 		C.CFRelease(C.CFTypeRef(i.ref))
 	}
 
-	i.closed = true
-}
-
-// cfStringToString converts a CFStringRef to a Go string.
-func cfStringToString(cfstr C.CFStringRef) string {
-	cstr := C.CFStringGetCStringPtr(cfstr, C.kCFStringEncodingUTF8)
-	if cstr == nil {
-		fmt.Println("ERR: CFStringGetCStringPtr nil")
-		return ""
+	if i.kref != nil {
+		C.CFRelease(C.CFTypeRef(i.kref))
 	}
 
-	return C.GoString(cstr)
+	i.closed = true
 }
 
 // stringToCFString converts a Go string to a CFStringRef.
@@ -241,18 +278,6 @@ func mapToCFDictionary(gomap map[C.CFTypeRef]C.CFTypeRef) C.CFDictionaryRef {
 	return C.CFDictionaryCreate(nil, &keys[0], &values[0], C.CFIndex(n), nil, nil)
 }
 
-// cfErrorToString converts a CFErrorRef to a Go String.
-func cfErrorToString(err C.CFErrorRef) string {
-	code := int(C.CFErrorGetCode(err))
-
-	cfDescription := C.CFErrorCopyDescription(err)
-	defer C.CFRelease(C.CFTypeRef(cfDescription))
-
-	description := cfStringToString(cfDescription)
-
-	return fmt.Sprintf("%d (%s)", code, description)
-}
-
 // cfDataToBytes converts a CFDataRef to a Go byte slice.
 func cfDataToBytes(cfdata C.CFDataRef) []byte {
 	nBytes := C.CFDataGetLength(cfdata)
@@ -260,8 +285,29 @@ func cfDataToBytes(cfdata C.CFDataRef) []byte {
 	return C.GoBytes(unsafe.Pointer(bytesPtr), C.int(nBytes))
 }
 
+// bytesToCFData converts a Go byte slice to a CFDataRef.
+func bytesToCFData(gobytes []byte) (C.CFDataRef, error) {
+	var (
+		cptr = (*C.UInt8)(nil)
+		clen = C.CFIndex(len(gobytes))
+	)
+
+	if len(gobytes) > 0 {
+		cptr = (*C.UInt8)(&gobytes[0])
+	}
+
+	cdata := C.CFDataCreate(nil, cptr, clen)
+	if cdata == nil {
+		return nil, errors.New("error creatin cfdata")
+	}
+
+	return cdata, nil
+}
+
+// osStatus wraps a C.OSStatus
 type osStatus C.OSStatus
 
+// osStatusError returns an error for an OSStatus unless it is errSecSuccess.
 func osStatusError(s C.OSStatus) error {
 	if s == C.errSecSuccess {
 		return nil
@@ -273,4 +319,26 @@ func osStatusError(s C.OSStatus) error {
 // Error implements the error interface.
 func (s osStatus) Error() string {
 	return fmt.Sprintf("OSStatus %d", s)
+}
+
+// cfErrorError returns an error for a CFErrorRef unless it is nil.
+func cfErrorError(cerr C.CFErrorRef) error {
+	if cerr == nil {
+		return nil
+	}
+
+	code := int(C.CFErrorGetCode(cerr))
+
+	if cdescription := C.CFErrorCopyDescription(cerr); cdescription != nil {
+		defer C.CFRelease(C.CFTypeRef(cdescription))
+
+		if cstr := C.CFStringGetCStringPtr(cdescription, C.kCFStringEncodingUTF8); cstr != nil {
+			str := C.GoString(cstr)
+
+			return fmt.Errorf("CFError %d (%s)", code, str)
+		}
+
+	}
+
+	return fmt.Errorf("CFError %d", code)
 }

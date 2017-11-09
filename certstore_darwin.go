@@ -26,16 +26,9 @@ type macIdentity struct {
 	closed bool
 }
 
-func findPreferredIdentity(name string) Identity {
-	cfName := stringToCFString(name)
-	defer C.CFRelease(C.CFTypeRef(cfName))
-
-	identRef := C.SecIdentityCopyPreferred(cfName, nil, nil)
-	if identRef == nil {
-		return nil
-	}
-
-	return newMacIdentity(identRef)
+func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
+	C.CFRetain(C.CFTypeRef(ref))
+	return &macIdentity{ref: ref}
 }
 
 // FindIdentities returns a slice of available signing identities.
@@ -66,9 +59,16 @@ func FindIdentities() ([]Identity, error) {
 	return idents, nil
 }
 
-func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
-	C.CFRetain(C.CFTypeRef(ref))
-	return &macIdentity{ref: ref}
+func findPreferredIdentity(name string) Identity {
+	cfName := stringToCFString(name)
+	defer C.CFRelease(C.CFTypeRef(cfName))
+
+	identRef := C.SecIdentityCopyPreferred(cfName, nil, nil)
+	if identRef == nil {
+		return nil
+	}
+
+	return newMacIdentity(identRef)
 }
 
 // GetCertificate implements the Identity iterface.
@@ -106,6 +106,34 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 	i.crt = crt
 
 	return i.crt, nil
+}
+
+// GetSigner implements the Identity iterface.
+func (i *macIdentity) GetSigner() (crypto.Signer, error) {
+	// pre-load the certificate so Public() is less likely to return nil
+	// unexpectedly.
+	if _, err := i.GetCertificate(); err != nil {
+		return nil, err
+	}
+
+	return i, nil
+}
+
+// Close implements the Identity iterface.
+func (i *macIdentity) Close() {
+	if i == nil {
+		return
+	}
+
+	if i.ref != nil {
+		C.CFRelease(C.CFTypeRef(i.ref))
+	}
+
+	if i.kref != nil {
+		C.CFRelease(C.CFTypeRef(i.kref))
+	}
+
+	i.closed = true
 }
 
 // Public implements the crypto.Signer iterface.
@@ -223,34 +251,6 @@ func (i *macIdentity) getKeyRef() (C.SecKeyRef, error) {
 	i.kref = keyRef
 
 	return i.kref, nil
-}
-
-// GetSigner implements the Identity iterface.
-func (i *macIdentity) GetSigner() (crypto.Signer, error) {
-	// pre-load the certificate so Public() is less likely to return nil
-	// unexpectedly.
-	if _, err := i.GetCertificate(); err != nil {
-		return nil, err
-	}
-
-	return i, nil
-}
-
-// Close implements the Identity iterface.
-func (i *macIdentity) Close() {
-	if i == nil {
-		return
-	}
-
-	if i.ref != nil {
-		C.CFRelease(C.CFTypeRef(i.ref))
-	}
-
-	if i.kref != nil {
-		C.CFRelease(C.CFTypeRef(i.kref))
-	}
-
-	i.closed = true
 }
 
 // stringToCFString converts a Go string to a CFStringRef.

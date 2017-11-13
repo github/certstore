@@ -14,7 +14,7 @@ func init() {
 }
 
 func loadRSAPFX() {
-	f, err := os.Open("test_data/cert_with_rsa_key.pfx")
+	f, err := os.Open("test_data/rsa.pfx")
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +29,7 @@ func loadRSAPFX() {
 }
 
 func loadECPFX() {
-	f, err := os.Open("test_data/cert_with_ec_key.pfx")
+	f, err := os.Open("test_data/ec.pfx")
 	if err != nil {
 		panic(err)
 	}

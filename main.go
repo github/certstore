@@ -9,19 +9,19 @@ func main() {
 	}
 
 	for _, ident := range idents {
+		defer ident.Close()
+
 		crt, err := ident.GetCertificate()
 		if err != nil {
 			panic(err)
 		}
 
-		if crt.Subject.CommonName != "Ben Toews" {
+		if crt.Subject.CommonName != "certstore-test" {
 			continue
 		}
 
 		if err := ident.Destroy(); err != nil {
-			panic(err)
+			fmt.Println(err)
 		}
-
-		fmt.Println("Deleted")
 	}
 }

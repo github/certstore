@@ -2,6 +2,7 @@ package main
 
 /*
 #cgo windows LDFLAGS: -lcrypt32 -lpthread -lncrypt -lbcrypt
+
 #include <windows.h>
 #include <wincrypt.h>
 #include <bcrypt.h>
@@ -61,7 +62,7 @@ const (
 //   0x00010000 — CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG  — Prefer CryptoAPI.
 //   0x00020000 — CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG — Prefer CNG.
 //   0x00040000 — CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG   — Only uyse CNG.
-var winAPIFlag C.DWORD = 0 // C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG
+var winAPIFlag C.DWORD = C.CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG
 
 // winIdentity implements the Identity iterface.
 type winIdentity struct {
@@ -156,6 +157,14 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 
 // Destroy implements the Identity iterface.
 func (i *winIdentity) Destroy() error {
+	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
+	deleteCtx := C.CertDuplicateCertificateContext(i.ctx)
+
+	// try deleting cert
+	if ok := C.CertDeleteCertificateFromStore(deleteCtx); ok == winFalse {
+		return lastError("failed to delete certificate from store")
+	}
+
 	wpk, err := i.getPrivateKey()
 	if err != nil {
 		return errors.Wrap(err, "failed to get identity private key")
@@ -163,14 +172,6 @@ func (i *winIdentity) Destroy() error {
 
 	if err := wpk.Delete(); err != nil {
 		return errors.Wrap(err, "failed to delete identity private key")
-	}
-
-	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
-	deleteCtx := C.CertDuplicateCertificateContext(i.ctx)
-
-	// try deleting cert
-	if ok := C.CertDeleteCertificateFromStore(deleteCtx); ok == winFalse {
-		return lastError("failed to delete certificate from store")
 	}
 
 	return nil
@@ -229,6 +230,12 @@ func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*wi
 		return nil, errors.New("nil public key")
 	}
 
+	// Search for cert private key and store it's association with the cert.
+	if ok := C.CryptFindCertificateKeyProvInfo(certCtx, C.CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG, nil); ok == winFalse {
+		return nil, lastError("failed to find private key for certificate")
+	}
+
+	// Get a handle for the found private key.
 	if ok := C.CryptAcquireCertificatePrivateKey(certCtx, winAPIFlag, nil, &provOrKey, &keySpec, &mustFree); ok == winFalse {
 		return nil, lastError("failed to get private key for certificate")
 	}
@@ -261,13 +268,11 @@ func (wpk *winPrivateKey) Public() crypto.PublicKey {
 func (wpk *winPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if wpk.capiProv != 0 {
 		return wpk.capiSignHash(opts.HashFunc(), digest)
-	}
-
-	if wpk.cngHandle != 0 {
+	} else if wpk.cngHandle != 0 {
 		return wpk.cngSignHash(opts.HashFunc(), digest)
+	} else {
+		return nil, errors.New("bad private key")
 	}
-
-	return nil, errors.New("bad winPrivateKey")
 }
 
 // cngSignHash signs a digest using the CNG APIs.
@@ -421,41 +426,47 @@ func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte,
 }
 
 func (wpk *winPrivateKey) Delete() error {
-	if wpk.capiProv == 0 {
-		return errors.New("not CryptoAPI provider")
-	}
+	if wpk.cngHandle != 0 {
+		// Delete CNG key
+		if err := checkStatus(C.NCryptDeleteKey(wpk.cngHandle, 0)); err != nil {
+			return err
+		}
+	} else if wpk.capiProv != 0 {
+		// Delete CryptoAPI key
+		var (
+			param unsafe.Pointer
+			err   error
 
-	var (
-		param unsafe.Pointer
-		err   error
+			containerName C.LPCTSTR
+			providerName  C.LPCTSTR
+			providerType  *C.DWORD
+		)
 
-		containerName C.LPCTSTR
-		providerName  C.LPCTSTR
-		providerType  *C.DWORD
-	)
+		if param, err = wpk.getProviderParam(C.PP_CONTAINER); err != nil {
+			return errors.Wrap(err, "failed to get PP_CONTAINER")
+		} else {
+			containerName = C.LPCTSTR(param)
+		}
 
-	if param, err = wpk.getProviderParam(C.PP_CONTAINER); err != nil {
-		return errors.Wrap(err, "failed to get PP_CONTAINER")
+		if param, err = wpk.getProviderParam(C.PP_NAME); err != nil {
+			return errors.Wrap(err, "failed to get PP_NAME")
+		} else {
+			providerName = C.LPCTSTR(param)
+		}
+
+		if param, err = wpk.getProviderParam(C.PP_PROVTYPE); err != nil {
+			return errors.Wrap(err, "failed to get PP_PROVTYPE")
+		} else {
+			providerType = (*C.DWORD)(param)
+		}
+
+		// use CRYPT_SILENT too?
+		var prov C.HCRYPTPROV
+		if ok := C.CryptAcquireContext(&prov, containerName, providerName, *providerType, C.CRYPT_DELETEKEYSET); ok == winFalse {
+			return lastError("failed to delete key set")
+		}
 	} else {
-		containerName = C.LPCTSTR(param)
-	}
-
-	if param, err = wpk.getProviderParam(C.PP_NAME); err != nil {
-		return errors.Wrap(err, "failed to get PP_NAME")
-	} else {
-		providerName = C.LPCTSTR(param)
-	}
-
-	if param, err = wpk.getProviderParam(C.PP_PROVTYPE); err != nil {
-		return errors.Wrap(err, "failed to get PP_PROVTYPE")
-	} else {
-		providerType = (*C.DWORD)(param)
-	}
-
-	// use CRYPT_SILENT too?
-	var prov C.HCRYPTPROV
-	if ok := C.CryptAcquireContext(&prov, containerName, providerName, *providerType, C.CRYPT_DELETEKEYSET); ok == winFalse {
-		return lastError("failed to delete key set")
+		return errors.New("bad private key")
 	}
 
 	return nil
@@ -500,10 +511,10 @@ type winStore struct {
 // openMyCertStore open the current user's personal cert store. Call Close()
 // when finished.
 func openMyCertStore() (*winStore, error) {
-	storeName := C.CString("MY")
-	defer C.free(unsafe.Pointer(storeName))
+	storeName := unsafe.Pointer(C.CString("MY"))
+	defer C.free(storeName)
 
-	store := C.CertOpenSystemStore(0, (*C.CHAR)(storeName))
+	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, C.CERT_SYSTEM_STORE_CURRENT_USER, storeName)
 	if store == nil {
 		return nil, lastError("failed to open system cert store")
 	}
@@ -511,8 +522,7 @@ func openMyCertStore() (*winStore, error) {
 	return &winStore{store: store}, nil
 }
 
-// importCertStore imports certificates and private keys from PFX (PKCS12) data.
-func importCertStore(data []byte, password string) (*winStore, error) {
+func (s *winStore) importPFX(data []byte, password string) ([]Identity, error) {
 	cdata := C.CBytes(data)
 	defer C.free(cdata)
 
@@ -524,13 +534,46 @@ func importCertStore(data []byte, password string) (*winStore, error) {
 		pbData: (*C.BYTE)(cdata),
 	}
 
-	store := C.PFXImportCertStore(pfx, cpw, C.CRYPT_EXPORTABLE|C.PKCS12_NO_PERSIST_KEY)
-	// store := C.PFXImportCertStore(pfx, cpw, C.CRYPT_USER_KEYSET)
+	flags := C.CRYPT_USER_KEYSET
+
+	// import into preferred KSP
+	if winAPIFlag&C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG > 0 {
+		flags |= C.PKCS12_PREFER_CNG_KSP
+	} else if winAPIFlag&C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG > 0 {
+		flags |= C.PKCS12_ALWAYS_CNG_KSP
+	}
+
+	store := C.PFXImportCertStore(pfx, cpw, C.DWORD(flags))
 	if store == nil {
 		return nil, lastError("failed to import PFX cert store")
 	}
 
-	return &winStore{store: store}, nil
+	wstore := &winStore{store: store}
+	defer wstore.Close()
+
+	idents := []Identity{}
+
+	for ctx := wstore.nextCert(); ctx != nil; ctx = wstore.nextCert() {
+		// Copy the cert context from the PFX store to the system store.
+		var newCtx C.PCCERT_CONTEXT
+		if ok := C.CertAddEncodedCertificateToStore(s.store, ctx.dwCertEncodingType, ctx.pbCertEncoded, ctx.cbCertEncoded, C.CERT_STORE_ADD_REPLACE_EXISTING, &newCtx); ok == winFalse {
+			for _, ident := range idents {
+				ident.Close()
+			}
+			return nil, lastError("failed to add imported certificate to MY store")
+		}
+
+		idents = append(idents, newWinIdentity(newCtx))
+	}
+
+	if err := wstore.getError(); err != nil {
+		for _, ident := range idents {
+			ident.Close()
+		}
+		return nil, err
+	}
+
+	return idents, nil
 }
 
 // nextCert starts or continues an iteration through this store's certificates.

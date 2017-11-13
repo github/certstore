@@ -294,8 +294,7 @@ func TestWindowsCryptoAPIECDSA(t *testing.T) {
 		t.Fatalf("expected CN='Ben Toews'. Got CN='%s'", crt.Subject.CommonName)
 	}
 
-	_, err := ident.GetSigner()
-	if err != nil {
+	if _, err := ident.GetSigner(); err != nil {
 		t.Fatal(err)
 	}
 

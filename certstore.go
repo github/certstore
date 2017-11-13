@@ -13,6 +13,9 @@ type Identity interface {
 	// GetSigner gets a crypto.Signer that uses the identity's private key.
 	GetSigner() (crypto.Signer, error)
 
+	// Destroy deletes this identity from the system.
+	Destroy() error
+
 	// Close any manually managed memory held by the Identity.
 	Close()
 }

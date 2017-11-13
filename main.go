@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 func main() {
 	idents, err := FindIdentities()
 	if err != nil {
@@ -16,10 +18,10 @@ func main() {
 			continue
 		}
 
-		macIdent := ident.(*macIdentity)
-
-		if err := macIdent.Destroy(); err != nil {
+		if err := ident.Destroy(); err != nil {
 			panic(err)
 		}
+
+		fmt.Println("Deleted")
 	}
 }

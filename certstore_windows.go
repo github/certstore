@@ -1,14 +1,11 @@
 package main
 
 /*
-#cgo windows LDFLAGS: -lcrypt32 -lpthread -lncrypt -lbcrypt
+#cgo windows LDFLAGS: -lcrypt32 -lncrypt
 
 #include <windows.h>
 #include <wincrypt.h>
-#include <bcrypt.h>
 #include <ncrypt.h>
-#include <winerror.h>
-#include <stdio.h>
 
 char* errMsg(DWORD code) {
 	char* lpMsgBuf;
@@ -62,59 +59,122 @@ const (
 //   0x00010000 — CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG  — Prefer CryptoAPI.
 //   0x00020000 — CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG — Prefer CNG.
 //   0x00040000 — CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG   — Only uyse CNG.
-var winAPIFlag C.DWORD = C.CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG
+var winAPIFlag C.DWORD = C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG
+
+// winStore is a wrapper around a C.HCERTSTORE.
+type winStore struct {
+	store C.HCERTSTORE
+}
+
+// openStore opens the current user's personal cert store.
+func openStore() (*winStore, error) {
+	storeName := unsafe.Pointer(stringToUTF16("MY"))
+	defer C.free(storeName)
+
+	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, C.CERT_SYSTEM_STORE_CURRENT_USER, storeName)
+	if store == nil {
+		return nil, lastError("failed to open system cert store")
+	}
+
+	return &winStore{store}, nil
+}
+
+// Identities implements the Store interface.
+func (s *winStore) Identities() ([]Identity, error) {
+	var (
+		ctx      = C.PCCERT_CONTEXT(nil)
+		encoding = C.DWORD(C.X509_ASN_ENCODING | C.PKCS_7_ASN_ENCODING)
+		idents   = []Identity{}
+	)
+
+	for {
+		if ctx = C.CertFindCertificateInStore(s.store, encoding, 0, C.CERT_FIND_ANY, nil, ctx); ctx == nil {
+			break
+		}
+
+		idents = append(idents, newWinIdentity(ctx))
+	}
+
+	if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != cryptENotFound {
+		for _, ident := range idents {
+			ident.Close()
+		}
+		return nil, err
+	}
+
+	return idents, nil
+}
+
+// Import implements the Store interface.
+func (s *winStore) Import(data []byte, password string) error {
+	cdata := C.CBytes(data)
+	defer C.free(cdata)
+
+	cpw := stringToUTF16(password)
+	defer C.free(unsafe.Pointer(cpw))
+
+	pfx := &C.CRYPT_DATA_BLOB{
+		cbData: C.DWORD(len(data)),
+		pbData: (*C.BYTE)(cdata),
+	}
+
+	flags := C.CRYPT_USER_KEYSET
+
+	// import into preferred KSP
+	if winAPIFlag&C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG > 0 {
+		flags |= C.PKCS12_PREFER_CNG_KSP
+	} else if winAPIFlag&C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG > 0 {
+		flags |= C.PKCS12_ALWAYS_CNG_KSP
+	}
+
+	store := C.PFXImportCertStore(pfx, cpw, C.DWORD(flags))
+	if store == nil {
+		return lastError("failed to import PFX cert store")
+	}
+	defer C.CertCloseStore(store, C.CERT_CLOSE_STORE_FORCE_FLAG)
+
+	var (
+		ctx      = C.PCCERT_CONTEXT(nil)
+		encoding = C.DWORD(C.X509_ASN_ENCODING | C.PKCS_7_ASN_ENCODING)
+	)
+
+	for {
+		// iterate through certs in temporary store
+		if ctx = C.CertFindCertificateInStore(store, encoding, 0, C.CERT_FIND_ANY, nil, ctx); ctx == nil {
+			if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != cryptENotFound {
+				return err
+			}
+
+			break
+		}
+
+		// Copy the cert to the system store.
+		if ok := C.CertAddCertificateContextToStore(s.store, ctx, C.CERT_STORE_ADD_REPLACE_EXISTING, nil); ok == winFalse {
+			return lastError("failed to add importerd certificate to MY store")
+		}
+	}
+
+	return nil
+}
+
+// Close implements the Store interface.
+func (s *winStore) Close() {
+	C.CertCloseStore(s.store, 0)
+	s.store = nil
+}
 
 // winIdentity implements the Identity iterface.
 type winIdentity struct {
 	ctx    C.PCCERT_CONTEXT
 	signer *winPrivateKey
-	closed bool
 }
 
 func newWinIdentity(ctx C.PCCERT_CONTEXT) *winIdentity {
 	return &winIdentity{ctx: C.CertDuplicateCertificateContext(ctx)}
 }
 
-// FindIdentities returns a slice of available signing identities.
-func FindIdentities() ([]Identity, error) {
-	store, err := openMyCertStore()
-	if err != nil {
-		return nil, errors.Wrap(err, "openMyCertStore failed")
-	}
-	defer store.Close()
-
-	idents, err := findIdentities(store)
-	if err != nil {
-		return nil, errors.Wrap(err, "findIdentities failed")
-	}
-
-	return idents, nil
-}
-
-func findIdentities(store *winStore) ([]Identity, error) {
-	idents := make([]Identity, 0)
-
-	for ctx := store.nextCert(); ctx != nil; ctx = store.nextCert() {
-		idents = append(idents, newWinIdentity(ctx))
-	}
-
-	if err := store.getError(); err != nil {
-		for _, ident := range idents {
-			ident.Close()
-		}
-
-		return nil, errors.Wrap(err, "identity iteration failed")
-	}
-
-	return idents, nil
-}
-
-// GetCertificate implements the Identity iterface.
-func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
-	if err := i._check(); err != nil {
-		return nil, err
-	}
-
+// Certificate implements the Identity iterface.
+func (i *winIdentity) Certificate() (*x509.Certificate, error) {
 	der := C.GoBytes(unsafe.Pointer(i.ctx.pbCertEncoded), C.int(i.ctx.cbCertEncoded))
 
 	cert, err := x509.ParseCertificate(der)
@@ -125,22 +185,18 @@ func (i *winIdentity) GetCertificate() (*x509.Certificate, error) {
 	return cert, nil
 }
 
-// GetSigner implements the Identity interface.
-func (i *winIdentity) GetSigner() (crypto.Signer, error) {
+// Signer implements the Identity interface.
+func (i *winIdentity) Signer() (crypto.Signer, error) {
 	return i.getPrivateKey()
 }
 
 // getPrivateKey gets this identity's private *winPrivateKey.
 func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
-	if err := i._check(); err != nil {
-		return nil, err
-	}
-
 	if i.signer != nil {
 		return i.signer, nil
 	}
 
-	cert, err := i.GetCertificate()
+	cert, err := i.Certificate()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get identity certificate")
 	}
@@ -155,8 +211,8 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 	return i.signer, nil
 }
 
-// Destroy implements the Identity iterface.
-func (i *winIdentity) Destroy() error {
+// Delete implements the Identity iterface.
+func (i *winIdentity) Delete() error {
 	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
 	deleteCtx := C.CertDuplicateCertificateContext(i.ctx)
 
@@ -165,6 +221,7 @@ func (i *winIdentity) Destroy() error {
 		return lastError("failed to delete certificate from store")
 	}
 
+	// try deleting private key
 	wpk, err := i.getPrivateKey()
 	if err != nil {
 		return errors.Wrap(err, "failed to get identity private key")
@@ -179,31 +236,13 @@ func (i *winIdentity) Destroy() error {
 
 // Close implements the Identity iterface.
 func (i *winIdentity) Close() {
-	if err := i._check(); err != nil {
-		return
-	}
-
 	if i.signer != nil {
 		i.signer.Close()
+		i.signer = nil
 	}
 
 	C.CertFreeCertificateContext(i.ctx)
-}
-
-func (i *winIdentity) _check() error {
-	if i == nil {
-		return errors.New("nil winIdentity pointer")
-	}
-
-	if i.ctx == nil {
-		return errors.New("nil certificate context")
-	}
-
-	if i.closed {
-		return errors.New("identity closed")
-	}
-
-	return nil
+	i.ctx = nil
 }
 
 // winPrivateKey is a wrapper around a HCRYPTPROV_OR_NCRYPT_KEY_HANDLE.
@@ -228,11 +267,6 @@ func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*wi
 
 	if publicKey == nil {
 		return nil, errors.New("nil public key")
-	}
-
-	// Search for cert private key and store it's association with the cert.
-	if ok := C.CryptFindCertificateKeyProvInfo(certCtx, C.CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG, nil); ok == winFalse {
-		return nil, lastError("failed to find private key for certificate")
 	}
 
 	// Get a handle for the found private key.
@@ -299,6 +333,8 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 		padPtr = unsafe.Pointer(&padInfo)
 
 		switch hash {
+		case crypto.MD5:
+			padInfo.pszAlgId = BCRYPT_MD5_ALGORITHM
 		case crypto.SHA1:
 			padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
 		case crypto.SHA256:
@@ -493,181 +529,13 @@ func (wpk *winPrivateKey) getProviderParam(param C.DWORD) (unsafe.Pointer, error
 func (wpk *winPrivateKey) Close() {
 	if wpk.cngHandle != 0 {
 		C.NCryptFreeObject(C.NCRYPT_HANDLE(wpk.cngHandle))
+		wpk.cngHandle = 0
 	}
 
 	if wpk.capiProv != 0 {
 		C.CryptReleaseContext(wpk.capiProv, 0)
+		wpk.capiProv = 0
 	}
-}
-
-// winStore is a wrapper around a C.HCERTSTORE.
-type winStore struct {
-	store  C.HCERTSTORE
-	prev   C.PCCERT_CONTEXT
-	err    error
-	closed bool
-}
-
-// openMyCertStore open the current user's personal cert store. Call Close()
-// when finished.
-func openMyCertStore() (*winStore, error) {
-	storeName := unsafe.Pointer(C.CString("MY"))
-	defer C.free(storeName)
-
-	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, C.CERT_SYSTEM_STORE_CURRENT_USER, storeName)
-	if store == nil {
-		return nil, lastError("failed to open system cert store")
-	}
-
-	return &winStore{store: store}, nil
-}
-
-func (s *winStore) importPFX(data []byte, password string) ([]Identity, error) {
-	cdata := C.CBytes(data)
-	defer C.free(cdata)
-
-	cpw := stringToUTF16(password)
-	defer C.free(unsafe.Pointer(cpw))
-
-	pfx := &C.CRYPT_DATA_BLOB{
-		cbData: C.DWORD(len(data)),
-		pbData: (*C.BYTE)(cdata),
-	}
-
-	flags := C.CRYPT_USER_KEYSET
-
-	// import into preferred KSP
-	if winAPIFlag&C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG > 0 {
-		flags |= C.PKCS12_PREFER_CNG_KSP
-	} else if winAPIFlag&C.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG > 0 {
-		flags |= C.PKCS12_ALWAYS_CNG_KSP
-	}
-
-	store := C.PFXImportCertStore(pfx, cpw, C.DWORD(flags))
-	if store == nil {
-		return nil, lastError("failed to import PFX cert store")
-	}
-
-	wstore := &winStore{store: store}
-	defer wstore.Close()
-
-	idents := []Identity{}
-
-	for ctx := wstore.nextCert(); ctx != nil; ctx = wstore.nextCert() {
-		// Copy the cert context from the PFX store to the system store.
-		var newCtx C.PCCERT_CONTEXT
-		if ok := C.CertAddEncodedCertificateToStore(s.store, ctx.dwCertEncodingType, ctx.pbCertEncoded, ctx.cbCertEncoded, C.CERT_STORE_ADD_REPLACE_EXISTING, &newCtx); ok == winFalse {
-			for _, ident := range idents {
-				ident.Close()
-			}
-			return nil, lastError("failed to add imported certificate to MY store")
-		}
-
-		idents = append(idents, newWinIdentity(newCtx))
-	}
-
-	if err := wstore.getError(); err != nil {
-		for _, ident := range idents {
-			ident.Close()
-		}
-		return nil, err
-	}
-
-	return idents, nil
-}
-
-// nextCert starts or continues an iteration through this store's certificates.
-// Nil is returned once all certs have been retrieved or an error is
-// encountered. Check getError() to see why iteration stopped. Iteration can be
-// started over by calling reset().
-func (s *winStore) nextCert() C.PCCERT_CONTEXT {
-	if err := s._check(); err != nil {
-		s.err = err
-	}
-
-	if s.err != nil {
-		return nil
-	}
-
-	s.prev = C.CertFindCertificateInStore(
-		s.store,
-		C.X509_ASN_ENCODING|C.PKCS_7_ASN_ENCODING,
-		0,
-		C.CERT_FIND_ANY,
-		nil,
-		s.prev,
-	)
-
-	if s.prev == nil {
-		s.err = lastError("CertFindCertificateInStore failed")
-
-		return nil
-	}
-
-	return s.prev
-}
-
-// getError returns any error encountered while iterating through store's certs
-// with nextCert().
-func (s *winStore) getError() error {
-	if err := s._check(); err != nil {
-		return err
-	}
-
-	// cryptENotFound is encountered at the end of iteration or if the store
-	// doesn't have any certs.
-	if errors.Cause(s.err) == cryptENotFound {
-		return nil
-	}
-
-	return s.err
-}
-
-// reset clears nextCert() iteration state.
-func (s *winStore) reset() error {
-	if err := s._check(); err != nil {
-		return err
-	}
-
-	if s.prev != nil {
-		C.CertFreeCertificateContext(s.prev)
-	}
-
-	s.prev = nil
-	s.err = nil
-
-	return nil
-}
-
-// Close closes this store.
-func (s *winStore) Close() {
-	if err := s._check(); err != nil {
-		return
-	}
-
-	if s.prev != nil {
-		C.CertFreeCertificateContext(s.prev)
-	}
-
-	C.CertCloseStore(s.store, 0)
-
-	s.closed = true
-}
-
-func (s *winStore) _check() error {
-	if s == nil {
-		return errors.New("nil winStore pointer")
-	}
-
-	if s.store == nil {
-		return errors.New("nil winStore pointer")
-	}
-
-	if s.closed {
-		return errors.New("store closed")
-	}
-
-	return nil
 }
 
 type errCode C.DWORD

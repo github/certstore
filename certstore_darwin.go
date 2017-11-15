@@ -18,21 +18,17 @@ import (
 	"unsafe"
 )
 
-// macIdentity implements the Identity iterface.
-type macIdentity struct {
-	ref    C.SecIdentityRef
-	kref   C.SecKeyRef
-	crt    *x509.Certificate
-	closed bool
+// macStore is a bogus type. We have to explicitly open/close the store on
+// windows, so we provide those methods here too.
+type macStore int
+
+// openStore is a function for opening a macStore.
+func openStore() (macStore, error) {
+	return macStore(0), nil
 }
 
-func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
-	C.CFRetain(C.CFTypeRef(ref))
-	return &macIdentity{ref: ref}
-}
-
-// FindIdentities returns a slice of available signing identities.
-func FindIdentities() ([]Identity, error) {
+// Identities implements the Store interface.
+func (s macStore) Identities() ([]Identity, error) {
 	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
 		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
@@ -62,32 +58,28 @@ func FindIdentities() ([]Identity, error) {
 	return idents, nil
 }
 
-func findPreferredIdentity(name string) Identity {
-	cfName := stringToCFString(name)
-	defer C.CFRelease(C.CFTypeRef(cfName))
-
-	identRef := C.SecIdentityCopyPreferred(cfName, nil, nil)
-	if identRef == nil {
-		return nil
-	}
-
-	return newMacIdentity(identRef)
+// Import implements the Store interface.
+func (s macStore) Import(data []byte, password string) error {
+	return errors.New("not implemente4d")
 }
 
-// GetCertificate implements the Identity iterface.
-func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
-	if i.closed {
-		return nil, errors.New("identity closed")
-	}
+// Close implements the Store interface.
+func (s macStore) Close() {}
 
-	if i.ref == nil {
-		return nil, errors.New("nil identity ref")
-	}
+// macIdentity implements the Identity iterface.
+type macIdentity struct {
+	ref  C.SecIdentityRef
+	kref C.SecKeyRef
+	crt  *x509.Certificate
+}
 
-	if i.crt != nil {
-		return i.crt, nil
-	}
+func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
+	C.CFRetain(C.CFTypeRef(ref))
+	return &macIdentity{ref: ref}
+}
 
+// Certificate implements the Identity iterface.
+func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	var certRef C.SecCertificateRef
 	if err := osStatusError(C.SecIdentityCopyCertificate(i.ref, &certRef)); err != nil {
 		return nil, err
@@ -103,7 +95,7 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 	der := cfDataToBytes(derRef)
 	crt, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, errors.New("identity closed")
+		return nil, err
 	}
 
 	i.crt = crt
@@ -111,35 +103,19 @@ func (i *macIdentity) GetCertificate() (*x509.Certificate, error) {
 	return i.crt, nil
 }
 
-// GetSigner implements the Identity iterface.
-func (i *macIdentity) GetSigner() (crypto.Signer, error) {
-	if i.closed {
-		return nil, errors.New("identity closed")
-	}
-
-	if i.ref == nil {
-		return nil, errors.New("nil identity ref")
-	}
-
+// Signer implements the Identity iterface.
+func (i *macIdentity) Signer() (crypto.Signer, error) {
 	// pre-load the certificate so Public() is less likely to return nil
 	// unexpectedly.
-	if _, err := i.GetCertificate(); err != nil {
+	if _, err := i.Certificate(); err != nil {
 		return nil, err
 	}
 
 	return i, nil
 }
 
-// Destroy implements the Identity iterface.
-func (i *macIdentity) Destroy() error {
-	if i.closed {
-		return errors.New("identity closed")
-	}
-
-	if i.ref == nil {
-		return errors.New("nil identity ref")
-	}
-
+// Delete implements the Identity iterface.
+func (i *macIdentity) Delete() error {
 	itemList := []C.SecIdentityRef{i.ref}
 	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
 	citemList := C.CFArrayCreate(nil, itemListPtr, 1, nil)
@@ -166,24 +142,20 @@ func (i *macIdentity) Destroy() error {
 
 // Close implements the Identity iterface.
 func (i *macIdentity) Close() {
-	if i == nil {
-		return
-	}
-
 	if i.ref != nil {
 		C.CFRelease(C.CFTypeRef(i.ref))
+		i.ref = nil
 	}
 
 	if i.kref != nil {
 		C.CFRelease(C.CFTypeRef(i.kref))
+		i.kref = nil
 	}
-
-	i.closed = true
 }
 
 // Public implements the crypto.Signer iterface.
 func (i *macIdentity) Public() crypto.PublicKey {
-	cert, err := i.GetCertificate()
+	cert, err := i.Certificate()
 	if err != nil {
 		return nil
 	}
@@ -236,7 +208,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 // getAlgo decides which algorithm to use with this key type for the given hash.
 func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err error) {
 	var crt *x509.Certificate
-	if crt, err = i.GetCertificate(); err != nil {
+	if crt, err = i.Certificate(); err != nil {
 		return
 	}
 
@@ -276,14 +248,6 @@ func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err err
 
 // getKeyRef gets the SecKeyRef for this identity's pricate key.
 func (i *macIdentity) getKeyRef() (C.SecKeyRef, error) {
-	if i.closed {
-		return nil, errors.New("identity closed")
-	}
-
-	if i.ref == nil {
-		return nil, errors.New("nil identity ref")
-	}
-
 	if i.kref != nil {
 		return i.kref, nil
 	}

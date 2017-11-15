@@ -1,4 +1,4 @@
-package main
+package certstore
 
 /*
 #cgo windows LDFLAGS: -lcrypt32 -lncrypt

@@ -1,4 +1,4 @@
-package main
+package certstore
 
 /*
 #cgo CFLAGS: -x objective-c

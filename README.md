@@ -1,4 +1,4 @@
-# certstore
+# certstore (https://godoc.org/github.com/mastahyeti/certstore?status.svg)](http://godoc.org/github.com/mastahyeti/certstore) [![Report card](https://goreportcard.com/badge/github.com/mastahyeti/certstore)](https://goreportcard.com/report/github.com/mastahyeti/certstore)
 
 Certstore is a Go library for accessing user identities stored in platform certificate stores. On Windows and macOS, certstore can enumerate user identities and sign messages with their private keys.
 

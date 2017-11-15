@@ -3,6 +3,13 @@ package main
 import (
 	"crypto"
 	"crypto/x509"
+	"errors"
+)
+
+var (
+	// ErrUnsupportedHash is returned by Signer.Sign() when the provided hash
+	// algorithm isn't supported.
+	ErrUnsupportedHash = errors.New("unsupported hash algorithm")
 )
 
 // Open opens the system's certificate store.

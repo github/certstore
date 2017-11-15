@@ -344,7 +344,7 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 		case crypto.SHA512:
 			padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
 		default:
-			return nil, errors.New("unsupported hash algorithm")
+			return nil, ErrUnsupportedHash
 		}
 	}
 
@@ -403,14 +403,18 @@ func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte,
 	case crypto.SHA512:
 		hash_alg = C.CALG_SHA_512
 	default:
-		return nil, errors.New("unsupported hash algorithm")
+		return nil, ErrUnsupportedHash
 	}
 
 	// Instantiate a CryptoAPI hash object.
 	var chash C.HCRYPTHASH
 
 	if ok := C.CryptCreateHash(C.HCRYPTPROV(wpk.capiProv), hash_alg, 0, 0, &chash); ok == winFalse {
-		return nil, lastError("failed to create hash")
+		if err := lastError("failed to create hash"); errors.Cause(err) == nteBadAlgID {
+			return nil, ErrUnsupportedHash
+		} else {
+			return nil, err
+		}
 	}
 	defer C.CryptDestroyHash(chash)
 
@@ -543,6 +547,9 @@ type errCode C.DWORD
 const (
 	// cryptENotFound — Cannot find object or property.
 	cryptENotFound errCode = C.CRYPT_E_NOT_FOUND & (1<<32 - 1)
+
+	// NTE_BAD_ALGID — Invalid algorithm specified.
+	nteBadAlgID errCode = C.NTE_BAD_ALGID & (1<<32 - 1)
 )
 
 // lastError gets the last error from the current thread.
@@ -567,6 +574,10 @@ type securityStatus C.SECURITY_STATUS
 func checkStatus(s C.SECURITY_STATUS) error {
 	if s == C.ERROR_SUCCESS {
 		return nil
+	}
+
+	if s == C.NTE_BAD_ALGID {
+		return ErrUnsupportedHash
 	}
 
 	return securityStatus(s)

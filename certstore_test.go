@@ -130,6 +130,7 @@ func TestSignerRSA(t *testing.T) {
 		sha1Digest := sha1.Sum([]byte("hello"))
 		sig, err := signer.Sign(rand.Reader, sha1Digest[:], crypto.SHA1)
 		if err != nil {
+			// SHA1 should be supported by all platforms.
 			t.Fatal(err)
 		}
 		if err = crt.CheckSignature(x509.SHA1WithRSA, []byte("hello"), sig); err != nil {
@@ -139,35 +140,44 @@ func TestSignerRSA(t *testing.T) {
 		// SHA256WithRSA
 		sha256Digest := sha256.Sum256([]byte("hello"))
 		sig, err = signer.Sign(rand.Reader, sha256Digest[:], crypto.SHA256)
-		if err != nil {
+		if err == ErrUnsupportedHash {
+			// Some Windows CSPs may not support this algorithm. Pass...
+		} else if err != nil {
 			t.Fatal(err)
-		}
-		if err = crt.CheckSignature(x509.SHA256WithRSA, []byte("hello"), sig); err != nil {
-			t.Fatal(err)
+		} else {
+			if err = crt.CheckSignature(x509.SHA256WithRSA, []byte("hello"), sig); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		// SHA384WithRSA
 		sha384Digest := sha512.Sum384([]byte("hello"))
 		sig, err = signer.Sign(rand.Reader, sha384Digest[:], crypto.SHA384)
-		if err != nil {
+		if err == ErrUnsupportedHash {
+			// Some Windows CSPs may not support this algorithm. Pass...
+		} else if err != nil {
 			t.Fatal(err)
-		}
-		if err = crt.CheckSignature(x509.SHA384WithRSA, []byte("hello"), sig); err != nil {
-			t.Fatal(err)
+		} else {
+			if err = crt.CheckSignature(x509.SHA384WithRSA, []byte("hello"), sig); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		// SHA512WithRSA
 		sha512Digest := sha512.Sum512([]byte("hello"))
 		sig, err = signer.Sign(rand.Reader, sha512Digest[:], crypto.SHA512)
-		if err != nil {
+		if err == ErrUnsupportedHash {
+			// Some Windows CSPs may not support this algorithm. Pass...
+		} else if err != nil {
 			t.Fatal(err)
-		}
-		if err = crt.CheckSignature(x509.SHA512WithRSA, []byte("hello"), sig); err != nil {
-			t.Fatal(err)
+		} else {
+			if err = crt.CheckSignature(x509.SHA512WithRSA, []byte("hello"), sig); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		// Bad digest size
-		_, err = signer.Sign(rand.Reader, sha512Digest[5:], crypto.SHA512)
+		_, err = signer.Sign(rand.Reader, sha1Digest[5:], crypto.SHA1)
 		if err == nil {
 			t.Fatal("expected error for bad digest size")
 		}
@@ -175,8 +185,8 @@ func TestSignerRSA(t *testing.T) {
 		// Unsupported hash
 		sha224Digest := sha256.Sum224([]byte("hello"))
 		_, err = signer.Sign(rand.Reader, sha224Digest[:], crypto.SHA224)
-		if err == nil {
-			t.Fatal("expected error for unsupported hash")
+		if err != ErrUnsupportedHash {
+			t.Fatal("expected ErrUnsupportedHash, got ", err)
 		}
 	})
 }

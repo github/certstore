@@ -333,8 +333,6 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 		padPtr = unsafe.Pointer(&padInfo)
 
 		switch hash {
-		case crypto.MD5:
-			padInfo.pszAlgId = BCRYPT_MD5_ALGORITHM
 		case crypto.SHA1:
 			padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
 		case crypto.SHA256:

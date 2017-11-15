@@ -1,9 +1,0 @@
-* [x] Windows CNG — RSA PKCS1 Signer
-* [ ] Windows CNG — RSA PSS Signer
-* [x] Windows CNG — ECDSA Signer
-* [x] Windows CryptoAPI — RSA PKCS1 Signer
-* [ ] Windows CryptoAPI — RSA PSS Signer
-* [x] Windows CryptoAPI — ECDSA Signer
-* [ ] Darwin — RSA PKCS1 Signer
-* [ ] Darwin — RSA PSS Signer
-* [ ] Darwin — ECDSA Signer

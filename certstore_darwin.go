@@ -45,7 +45,10 @@ func (s macStore) Identities() ([]Identity, error) {
 	}
 	defer C.CFRelease(C.CFTypeRef(absResult))
 
+	// don't need to release aryResult since the abstract result is released above.
 	aryResult := C.CFArrayRef(absResult)
+
+	// identRefs aren't owned by us initially. newMacIdentity retains them.
 	n := C.CFArrayGetCount(aryResult)
 	identRefs := make([]C.CFTypeRef, n)
 	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(&identRefs[0]))
@@ -60,7 +63,30 @@ func (s macStore) Identities() ([]Identity, error) {
 
 // Import implements the Store interface.
 func (s macStore) Import(data []byte, password string) error {
-	return errors.New("not implemente4d")
+	cdata, err := bytesToCFData(data)
+	if err != nil {
+		return err
+	}
+	defer C.CFRelease(C.CFTypeRef(cdata))
+
+	cpass := stringToCFString(password)
+	defer C.CFRelease(C.CFTypeRef(cpass))
+
+	cops := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecImportExportPassphrase): C.CFTypeRef(cpass),
+	})
+	if cops == nil {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(cops))
+
+	var cret C.CFArrayRef
+	if err := osStatusError(C.SecPKCS12Import(cdata, cops, &cret)); err != nil {
+		return err
+	}
+	defer C.CFRelease(C.CFTypeRef(cret))
+
+	return nil
 }
 
 // Close implements the Store interface.
@@ -180,6 +206,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	if err != nil {
 		return nil, err
 	}
+	defer C.CFRelease(C.CFTypeRef(cdigest))
 
 	algo, err := i.getAlgo(hash)
 	if err != nil {
@@ -191,6 +218,8 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	csig := C.SecKeyCreateSignature(kref, algo, cdigest, &cerr)
 
 	if err := cfErrorError(cerr); err != nil {
+		defer C.CFRelease(C.CFTypeRef(cerr))
+
 		return nil, err
 	}
 
@@ -224,7 +253,7 @@ func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err err
 		case crypto.SHA512:
 			algo = C.kSecKeyAlgorithmECDSASignatureDigestX962SHA512
 		default:
-			err = errors.New("unsupported hash algorithm")
+			err = ErrUnsupportedHash
 		}
 	case *rsa.PublicKey:
 		switch hash {
@@ -237,7 +266,7 @@ func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err err
 		case crypto.SHA512:
 			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512
 		default:
-			err = errors.New("unsupported hash algorithm")
+			err = ErrUnsupportedHash
 		}
 	default:
 		err = errors.New("unsupported key type")

@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+if [ ! -d test_data ]; then
+  script/setup
+fi
+
+go test

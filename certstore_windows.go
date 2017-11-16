@@ -570,11 +570,11 @@ func (c errCode) Error() string {
 type securityStatus C.SECURITY_STATUS
 
 func checkStatus(s C.SECURITY_STATUS) error {
-	if s == C.ERROR_SUCCESS {
+	if int64(s) == int64(C.ERROR_SUCCESS) {
 		return nil
 	}
 
-	if s == C.NTE_BAD_ALGID {
+	if int64(s) == int64(C.NTE_BAD_ALGID) {
 		return ErrUnsupportedHash
 	}
 

@@ -4,8 +4,9 @@ environment:
   GOPATH: c:\gopath
 
 install:
-  - ls C:\mingw-w64\x86_64-6.3.0-posix-seh-rt_v5-rev1\mingw64
-  # - set PATH=%PATH%;C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
+  - ls C:\msys64\mingw64\bin
+  - ls C:\mingw-w64\x86_64-6.3.0-posix-seh-rt_v5-rev1\mingw64\bin
+  - set PATH=%PATH%;C:\msys64\mingw64\bin
   - go version
   - go get -t -v ./...
 build_script:

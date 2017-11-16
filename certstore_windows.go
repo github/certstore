@@ -48,6 +48,15 @@ import (
 const (
 	winTrue  C.WINBOOL = 1
 	winFalse C.WINBOOL = 0
+
+	// ERROR_SUCCESS
+	ERROR_SUCCESS = 0x00000000
+
+	// CRYPT_E_NOT_FOUND — Cannot find object or property.
+	CRYPT_E_NOT_FOUND = 0x80092004
+
+	// NTE_BAD_ALGID — Invalid algorithm specified.
+	NTE_BAD_ALGID = 0x80090008
 )
 
 // winAPIFlag specifies the flags that should be passed to
@@ -95,7 +104,7 @@ func (s *winStore) Identities() ([]Identity, error) {
 		idents = append(idents, newWinIdentity(ctx))
 	}
 
-	if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != cryptENotFound {
+	if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != errCode(CRYPT_E_NOT_FOUND) {
 		for _, ident := range idents {
 			ident.Close()
 		}
@@ -141,7 +150,7 @@ func (s *winStore) Import(data []byte, password string) error {
 	for {
 		// iterate through certs in temporary store
 		if ctx = C.CertFindCertificateInStore(store, encoding, 0, C.CERT_FIND_ANY, nil, ctx); ctx == nil {
-			if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != cryptENotFound {
+			if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != errCode(CRYPT_E_NOT_FOUND) {
 				return err
 			}
 
@@ -408,7 +417,7 @@ func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte,
 	var chash C.HCRYPTHASH
 
 	if ok := C.CryptCreateHash(C.HCRYPTPROV(wpk.capiProv), hash_alg, 0, 0, &chash); ok == winFalse {
-		if err := lastError("failed to create hash"); errors.Cause(err) == nteBadAlgID {
+		if err := lastError("failed to create hash"); errors.Cause(err) == errCode(NTE_BAD_ALGID) {
 			return nil, ErrUnsupportedHash
 		} else {
 			return nil, err
@@ -540,15 +549,7 @@ func (wpk *winPrivateKey) Close() {
 	}
 }
 
-type errCode C.DWORD
-
-const (
-	// cryptENotFound — Cannot find object or property.
-	cryptENotFound errCode = C.CRYPT_E_NOT_FOUND & (1<<32 - 1)
-
-	// NTE_BAD_ALGID — Invalid algorithm specified.
-	nteBadAlgID errCode = C.NTE_BAD_ALGID & (1<<32 - 1)
-)
+type errCode uint64
 
 // lastError gets the last error from the current thread.
 func lastError(msg string) error {
@@ -567,22 +568,24 @@ func (c errCode) Error() string {
 	return fmt.Sprintf("Error: %X %s", int(c), gomsg)
 }
 
-type securityStatus C.SECURITY_STATUS
+type securityStatus uint64
 
 func checkStatus(s C.SECURITY_STATUS) error {
-	if s == C.ERROR_SUCCESS {
+	ss := securityStatus(s)
+
+	if ss == ERROR_SUCCESS {
 		return nil
 	}
 
-	if s == C.NTE_BAD_ALGID {
+	if ss == NTE_BAD_ALGID {
 		return ErrUnsupportedHash
 	}
 
-	return securityStatus(s)
+	return ss
 }
 
-func (s securityStatus) Error() string {
-	return fmt.Sprintf("SECURITY_STATUS %d", int(s))
+func (ss securityStatus) Error() string {
+	return fmt.Sprintf("SECURITY_STATUS %d", int(ss))
 }
 
 func stringToUTF16(s string) C.LPCWSTR {

@@ -6,6 +6,4 @@ go:
   - master
 
 os: osx
-osx_image:
-  - xcode8   # OS X 10.11 w/ Xcode 8gm
-  - xcode9.1 # OS X 10.12 w/ Xcode 9.1
+osx_image: xcode9.1 # OS X 10.12 w/ Xcode 9.1

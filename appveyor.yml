@@ -2,11 +2,10 @@ version: "{build}"
 clone_folder: c:\gopath\src\github.com\mastahyeti\certstore
 environment:
   GOPATH: c:\gopath
-  GCC_PATH: mingw_64
 
 install:
-  - ls C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
-  - set PATH=%PATH%;C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
+  - ls C:\mingw-w64\x86_64-6.3.0-posix-seh-rt_v5-rev1
+  # - set PATH=%PATH%;C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
   - go version
   - go get -t -v ./...
 build_script:

@@ -49,6 +49,9 @@ const (
 	winTrue  C.WINBOOL = 1
 	winFalse C.WINBOOL = 0
 
+	// ERROR_SUCCESS
+	ERROR_SUCCESS = 0x00000000
+
 	// CRYPT_E_NOT_FOUND — Cannot find object or property.
 	CRYPT_E_NOT_FOUND = 0x80092004
 
@@ -546,7 +549,7 @@ func (wpk *winPrivateKey) Close() {
 	}
 }
 
-type errCode C.DWORD
+type errCode uint64
 
 // lastError gets the last error from the current thread.
 func lastError(msg string) error {
@@ -565,22 +568,24 @@ func (c errCode) Error() string {
 	return fmt.Sprintf("Error: %X %s", int(c), gomsg)
 }
 
-type securityStatus C.SECURITY_STATUS
+type securityStatus uint64
 
 func checkStatus(s C.SECURITY_STATUS) error {
-	if s == C.ERROR_SUCCESS {
+	ss := securityStatus(s)
+
+	if ss == ERROR_SUCCESS {
 		return nil
 	}
 
-	if s == C.SECURITY_STATUS(NTE_BAD_ALGID) {
+	if ss == NTE_BAD_ALGID {
 		return ErrUnsupportedHash
 	}
 
-	return securityStatus(s)
+	return ss
 }
 
-func (s securityStatus) Error() string {
-	return fmt.Sprintf("SECURITY_STATUS %d", int(s))
+func (ss securityStatus) Error() string {
+	return fmt.Sprintf("SECURITY_STATUS %d", int(ss))
 }
 
 func stringToUTF16(s string) C.LPCWSTR {

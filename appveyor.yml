@@ -3,9 +3,10 @@ clone_folder: c:\gopath\src\github.com\mastahyeti\certstore
 environment:
   GOPATH: c:\gopath
 install:
-  - go version
-  - go get -t -v ./...
+  - set PATH=%PATH%;C:\tools\mingw64\bin
+  - bash -lc "cd $APPVEYOR_BUILD_FOLDER; go version"
+  - bash -lc "cd $APPVEYOR_BUILD_FOLDER; go get -t -v ./..."
 build_script:
-  - go build
+  - bash -lc "cd $APPVEYOR_BUILD_FOLDER; go build"
 test_script:
-  - go test -v
+  - bash -lc "cd $APPVEYOR_BUILD_FOLDER; go test -v"

@@ -1,0 +1,11 @@
+language: go
+go:
+  - 1.8.x
+  - 1.9.x
+  - 1.x
+  - master
+
+os: osx
+osx_image:
+  - xcode8   # OS X 10.11 w/ Xcode 8gm
+  - xcode9.1 # OS X 10.12 w/ Xcode 9.1

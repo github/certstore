@@ -5,6 +5,8 @@ environment:
   GCC_PATH: mingw_64
 
 install:
+  - ls C:\
+  - ls C:\mingw-w64\
   - set PATH=%PATH%;C:\MinGW\bin
   - go version
   - go get -t -v ./...

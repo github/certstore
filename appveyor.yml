@@ -5,9 +5,8 @@ environment:
   GCC_PATH: mingw_64
 
 install:
-  - ls C:\
-  - ls C:\mingw-w64\
-  - set PATH=%PATH%;C:\MinGW\bin
+  - ls C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
+  - set PATH=%PATH%;C:\mingw-w64\i686-6.3.0-posix-dwarf-rt_v5-rev1\bin
   - go version
   - go get -t -v ./...
 build_script:

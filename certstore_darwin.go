@@ -4,11 +4,7 @@ package certstore
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework CoreFoundation -framework Security
 #include <CoreFoundation/CoreFoundation.h>
-#include <Security/SecKey.h>
-#include <Security/SecItem.h>
-#include <Security/SecImportExport.h>
-#include <Security/SecIdentity.h>
-#include <Security/SecCertificate.h>
+#include <Security/Security.h>
 */
 import "C"
 import (

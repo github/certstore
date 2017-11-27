@@ -15,20 +15,18 @@ import (
 )
 
 func TestImportDeleteRSA(t *testing.T) {
-	ImportDeleteHelper(t, rsaPFX, "asdf")
+	ImportDeleteHelper(t, iRSA)
 }
 
 func TestImportDeleteECDSA(t *testing.T) {
-	ImportDeleteHelper(t, ecPFX, "asdf")
+	ImportDeleteHelper(t, iEC)
 }
 
 // ImportDeleteHelper is an abstraction for testing identity Import()/Delete().
-func ImportDeleteHelper(t *testing.T, pfx []byte, password string) {
-	t.Helper()
-
+func ImportDeleteHelper(t *testing.T, i identityFixture) {
 	withStore(t, func(store Store) {
 		// Import an identity
-		if err := store.Import(pfx, password); err != nil {
+		if err := store.Import(i.pfx(), "asdf"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -48,9 +46,9 @@ func ImportDeleteHelper(t *testing.T, pfx []byte, password string) {
 				t.Fatal(errr)
 			}
 
-			if crt.Subject.CommonName == "certstore-test" {
+			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
 				if found != nil {
-					t.Fatal("duplicate certstore-test identity imported")
+					t.Fatal("duplicate identity imported")
 				}
 
 				found = ident
@@ -81,11 +79,7 @@ func ImportDeleteHelper(t *testing.T, pfx []byte, password string) {
 				t.Fatal(err)
 			}
 
-			if crt.Subject.CommonName == "certstore-test" {
-				if found != nil {
-					t.Fatal("duplicate certstore-test identity imported")
-				}
-
+			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
 				found = ident
 			}
 		}
@@ -96,7 +90,7 @@ func ImportDeleteHelper(t *testing.T, pfx []byte, password string) {
 }
 
 func TestSignerRSA(t *testing.T) {
-	priv, crt, err := pkcs12.Decode(rsaPFX, "asdf")
+	priv, crt, err := pkcs12.Decode(iRSA.pfx(), "asdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +100,7 @@ func TestSignerRSA(t *testing.T) {
 		t.Fatal("expected priv to be an RSA private key")
 	}
 
-	withIdentity(t, rsaPFX, "asdf", func(ident Identity) {
+	withIdentity(t, iRSA, func(ident Identity) {
 		signer, err := ident.Signer()
 		if err != nil {
 			t.Fatal(err)
@@ -192,7 +186,7 @@ func TestSignerRSA(t *testing.T) {
 }
 
 func TestSignerECDSA(t *testing.T) {
-	priv, crt, err := pkcs12.Decode(ecPFX, "asdf")
+	priv, crt, err := pkcs12.Decode(iEC.pfx(), "asdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +196,7 @@ func TestSignerECDSA(t *testing.T) {
 		t.Fatal("expected priv to be an ECDSA private key")
 	}
 
-	withIdentity(t, ecPFX, "asdf", func(ident Identity) {
+	withIdentity(t, iEC, func(ident Identity) {
 		signer, err := ident.Signer()
 		if err != nil {
 			t.Fatal(err)
@@ -271,57 +265,77 @@ func TestSignerECDSA(t *testing.T) {
 }
 
 func TestCertificateRSA(t *testing.T) {
-	_, crtExpected, err := pkcs12.Decode(rsaPFX, "asdf")
+	_, crtExpected, err := pkcs12.Decode(iRSA.pfx(), "asdf")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	withIdentity(t, rsaPFX, "asdf", func(ident Identity) {
-		crtActual, err := ident.Certificate()
+	withIdentity(t, iCA, func(caIdent Identity) {
+		caActual, err := caIdent.Certificate()
 		if err != nil {
 			t.Fatal(err)
-		}
-		if !crtActual.Equal(crtExpected) {
-			t.Fatal("Expected cert to match pfx")
 		}
 
-		chain, err := ident.CertificateChain()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(chain) < 1 {
-			t.Fatal("empty chain")
-		}
-		if !crtActual.Equal(chain[0]) {
-			t.Fatal("first chain cert should be leaf")
-		}
+		withIdentity(t, iRSA, func(ident Identity) {
+			crtActual, err := ident.Certificate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !crtActual.Equal(crtExpected) {
+				t.Fatal("Expected cert to match pfx")
+			}
+
+			chain, err := ident.CertificateChain()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chain) != 2 {
+				t.Fatal("bad chain")
+			}
+			if !crtActual.Equal(chain[0]) {
+				t.Fatal("first chain cert should be leaf")
+			}
+			if !caActual.Equal(chain[1]) {
+				t.Fatal("second chain cert should be CA")
+			}
+		})
 	})
 }
 
 func TestCertificateEC(t *testing.T) {
-	_, crtExpected, err := pkcs12.Decode(ecPFX, "asdf")
+	_, crtExpected, err := pkcs12.Decode(iEC.pfx(), "asdf")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	withIdentity(t, ecPFX, "asdf", func(ident Identity) {
-		crtActual, err := ident.Certificate()
+	withIdentity(t, iCA, func(caIdent Identity) {
+		caActual, err := caIdent.Certificate()
 		if err != nil {
 			t.Fatal(err)
-		}
-		if !crtActual.Equal(crtExpected) {
-			t.Fatal("Expected cert to match pfx")
 		}
 
-		chain, err := ident.CertificateChain()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(chain) < 1 {
-			t.Fatal("empty chain")
-		}
-		if !crtActual.Equal(chain[0]) {
-			t.Fatal("first chain cert should be leaf")
-		}
+		withIdentity(t, iEC, func(ident Identity) {
+			crtActual, err := ident.Certificate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !crtActual.Equal(crtExpected) {
+				t.Fatal("Expected cert to match pfx")
+			}
+
+			chain, err := ident.CertificateChain()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chain) != 2 {
+				t.Fatal("bad chain")
+			}
+			if !crtActual.Equal(chain[0]) {
+				t.Fatal("first chain cert should be leaf")
+			}
+			if !caActual.Equal(chain[1]) {
+				t.Fatal("second chain cert should be CA")
+			}
+		})
 	})
 }

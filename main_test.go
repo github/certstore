@@ -2,21 +2,65 @@ package certstore
 
 import (
 	"bytes"
+	"crypto/x509"
 	"io"
 	"os"
 	"testing"
 )
 
-var rsaPFX, ecPFX []byte
+type identityFixture int
+
+const (
+	iRSA identityFixture = iota
+	iEC
+	iCA
+)
+
+func (i identityFixture) pfx() []byte {
+	var path string
+	switch i {
+	case iRSA:
+		path = "test_data/certstore-rsa.pfx"
+	case iEC:
+		path = "test_data/certstore-ec.pfx"
+	case iCA:
+		path = "test_data/certstore-ca.pfx"
+	default:
+		panic("bad fixture")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	buf := new(bytes.Buffer)
+	if _, err := io.Copy(buf, f); err != nil {
+		panic(err)
+	}
+
+	return buf.Bytes()
+}
+
+func (i identityFixture) cn() string {
+	switch i {
+	case iRSA:
+		return "rsa"
+	case iEC:
+		return "ec"
+	case iCA:
+		return "ca"
+	}
+
+	panic("bad fixture")
+}
 
 func init() {
 	// delete any fixtures from a previous test run.
 	if err := clearFixtures(); err != nil {
 		panic(err)
 	}
-
-	loadRSAPFX()
-	loadECPFX()
 }
 
 func withStore(t *testing.T, cb func(Store)) {
@@ -31,12 +75,10 @@ func withStore(t *testing.T, cb func(Store)) {
 	cb(store)
 }
 
-func withIdentity(t *testing.T, pfx []byte, password string, cb func(Identity)) {
-	t.Helper()
-
+func withIdentity(t *testing.T, i identityFixture, cb func(Identity)) {
 	withStore(t, func(store Store) {
 		// Import an identity
-		if err := store.Import(pfx, password); err != nil {
+		if err := store.Import(i.pfx(), "asdf"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -56,9 +98,9 @@ func withIdentity(t *testing.T, pfx []byte, password string, cb func(Identity)) 
 				t.Fatal(err)
 			}
 
-			if crt.Subject.CommonName == "certstore-test" {
+			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
 				if found != nil {
-					t.Fatal("duplicate certstore-test identity imported")
+					t.Fatal("duplicate identity imported")
 				}
 				found = ident
 			}
@@ -99,7 +141,7 @@ func clearFixtures() error {
 			return err
 		}
 
-		if crt.Subject.CommonName == "certstore-test" {
+		if isFixture(crt) {
 			if err := ident.Delete(); err != nil {
 				return err
 			}
@@ -109,32 +151,6 @@ func clearFixtures() error {
 	return nil
 }
 
-func loadRSAPFX() {
-	f, err := os.Open("test_data/rsa.pfx")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	buf := bytes.NewBuffer(nil)
-	if _, err := io.Copy(buf, f); err != nil {
-		panic(err)
-	}
-
-	rsaPFX = buf.Bytes()
-}
-
-func loadECPFX() {
-	f, err := os.Open("test_data/ec.pfx")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	buf := bytes.NewBuffer(nil)
-	if _, err := io.Copy(buf, f); err != nil {
-		panic(err)
-	}
-
-	ecPFX = buf.Bytes()
+func isFixture(crt *x509.Certificate) bool {
+	return len(crt.Subject.Organization) == 1 && crt.Subject.Organization[0] == "certstore"
 }

@@ -284,6 +284,17 @@ func TestCertificateRSA(t *testing.T) {
 		if !crtActual.Equal(crtExpected) {
 			t.Fatal("Expected cert to match pfx")
 		}
+
+		chain, err := ident.CertificateChain()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chain) < 1 {
+			t.Fatal("empty chain")
+		}
+		if !crtActual.Equal(chain[0]) {
+			t.Fatal("first chain cert should be leaf")
+		}
 	})
 }
 
@@ -300,6 +311,17 @@ func TestCertificateEC(t *testing.T) {
 		}
 		if !crtActual.Equal(crtExpected) {
 			t.Fatal("Expected cert to match pfx")
+		}
+
+		chain, err := ident.CertificateChain()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chain) < 1 {
+			t.Fatal("empty chain")
+		}
+		if !crtActual.Equal(chain[0]) {
+			t.Fatal("first chain cert should be leaf")
 		}
 	})
 }

@@ -94,9 +94,11 @@ func (s macStore) Close() {}
 
 // macIdentity implements the Identity iterface.
 type macIdentity struct {
-	ref  C.SecIdentityRef
-	kref C.SecKeyRef
-	crt  *x509.Certificate
+	ref   C.SecIdentityRef
+	kref  C.SecKeyRef
+	cref  C.SecCertificateRef
+	crt   *x509.Certificate
+	chain []*x509.Certificate
 }
 
 func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
@@ -106,20 +108,12 @@ func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 
 // Certificate implements the Identity iterface.
 func (i *macIdentity) Certificate() (*x509.Certificate, error) {
-	var certRef C.SecCertificateRef
-	if err := osStatusError(C.SecIdentityCopyCertificate(i.ref, &certRef)); err != nil {
+	certRef, err := i.getCertRef()
+	if err != nil {
 		return nil, err
 	}
-	defer C.CFRelease(C.CFTypeRef(certRef))
 
-	derRef := C.SecCertificateCopyData(certRef)
-	if derRef == nil {
-		return nil, errors.New("error getting certificate from identity")
-	}
-	defer C.CFRelease(C.CFTypeRef(derRef))
-
-	der := cfDataToBytes(derRef)
-	crt, err := x509.ParseCertificate(der)
+	crt, err := exportCertRef(certRef)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +121,55 @@ func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	i.crt = crt
 
 	return i.crt, nil
+}
+
+// CertificateChain implements the Identity iterface.
+func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	if i.chain != nil {
+		return i.chain, nil
+	}
+
+	certRef, err := i.getCertRef()
+	if err != nil {
+		return nil, err
+	}
+
+	policy := C.SecPolicyCreateSSL(0, nil)
+
+	var trustRef C.SecTrustRef
+	if err := osStatusError(C.SecTrustCreateWithCertificates(C.CFTypeRef(certRef), C.CFTypeRef(policy), &trustRef)); err != nil {
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(trustRef))
+
+	var status C.SecTrustResultType
+	if err := osStatusError(C.SecTrustEvaluate(trustRef, &status)); err != nil {
+		return nil, err
+	}
+
+	var (
+		nchain = C.SecTrustGetCertificateCount(trustRef)
+		chain  = make([]*x509.Certificate, 0, int(nchain))
+	)
+
+	for i := C.CFIndex(0); i < nchain; i++ {
+		// TODO: do we need to release these?
+		chainCertref := C.SecTrustGetCertificateAtIndex(trustRef, i)
+		if chainCertref == nil {
+			return nil, errors.New("nil certificate in chain")
+		}
+
+		chainCert, err := exportCertRef(chainCertref)
+		if err != nil {
+			return nil, err
+		}
+
+		chain = append(chain, chainCert)
+	}
+
+	i.chain = chain
+
+	return chain, nil
 }
 
 // Signer implements the Identity iterface.
@@ -176,6 +219,11 @@ func (i *macIdentity) Close() {
 	if i.kref != nil {
 		C.CFRelease(C.CFTypeRef(i.kref))
 		i.kref = nil
+	}
+
+	if i.cref != nil {
+		C.CFRelease(C.CFTypeRef(i.cref))
+		i.cref = nil
 	}
 }
 
@@ -289,6 +337,39 @@ func (i *macIdentity) getKeyRef() (C.SecKeyRef, error) {
 	i.kref = keyRef
 
 	return i.kref, nil
+}
+
+// getCertRef gets the SecCertificateRef for this identity's certificate.
+func (i *macIdentity) getCertRef() (C.SecCertificateRef, error) {
+	if i.cref != nil {
+		return i.cref, nil
+	}
+
+	var certRef C.SecCertificateRef
+	if err := osStatusError(C.SecIdentityCopyCertificate(i.ref, &certRef)); err != nil {
+		return nil, err
+	}
+
+	i.cref = certRef
+
+	return i.cref, nil
+}
+
+// exportCertRef gets a *x509.Certificate for the given SecCertificateRef.
+func exportCertRef(certRef C.SecCertificateRef) (*x509.Certificate, error) {
+	derRef := C.SecCertificateCopyData(certRef)
+	if derRef == nil {
+		return nil, errors.New("error getting certificate from identity")
+	}
+	defer C.CFRelease(C.CFTypeRef(derRef))
+
+	der := cfDataToBytes(derRef)
+	crt, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+
+	return crt, nil
 }
 
 // stringToCFString converts a Go string to a CFStringRef.

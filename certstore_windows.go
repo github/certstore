@@ -194,6 +194,11 @@ func (i *winIdentity) Certificate() (*x509.Certificate, error) {
 	return cert, nil
 }
 
+// CertificateChain implements the Identity iterface.
+func (i *winIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	return nil, errors.New("not implemented")
+}
+
 // Signer implements the Identity interface.
 func (i *winIdentity) Signer() (crypto.Signer, error) {
 	return i.getPrivateKey()

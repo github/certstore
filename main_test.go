@@ -64,8 +64,6 @@ func init() {
 }
 
 func withStore(t *testing.T, cb func(Store)) {
-	t.Helper()
-
 	store, err := Open()
 	if err != nil {
 		t.Fatal(err)

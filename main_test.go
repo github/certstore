@@ -20,7 +20,7 @@ var (
 
 	intermediate = root.Issue(fakeca.IsCA, fakeca.Subject(pkix.Name{
 		Organization: []string{"certstore"},
-		CommonName:   "root",
+		CommonName:   "intermediate",
 	}))
 
 	leafKeyRSA, _ = rsa.GenerateKey(rand.Reader, 2048)

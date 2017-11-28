@@ -279,7 +279,7 @@ func CertificateHelper(t *testing.T, leaf *fakeca.Identity) {
 					t.Fatal(err)
 				}
 				if len(chain) != 3 {
-					t.Fatal("bad chain")
+					t.Fatalf("bad chain len. expected 3, got %d", len(chain))
 				}
 				if !leaf.Certificate.Equal(chain[0]) {
 					t.Fatal("first chain cert should be leaf")

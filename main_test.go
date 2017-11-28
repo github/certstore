@@ -38,9 +38,7 @@ var (
 
 func init() {
 	// delete any fixtures from a previous test run.
-	if err := clearFixtures(); err != nil {
-		panic(err)
-	}
+	clearFixtures()
 }
 
 func withStore(t *testing.T, cb func(Store)) {
@@ -98,16 +96,16 @@ func withIdentity(t *testing.T, i *fakeca.Identity, cb func(Identity)) {
 	})
 }
 
-func clearFixtures() error {
+func clearFixtures() {
 	store, err := Open()
 	if err != nil {
-		return err
+		panic(err)
 	}
 	defer store.Close()
 
 	idents, err := store.Identities()
 	if err != nil {
-		return err
+		panic(err)
 	}
 	for _, ident := range idents {
 		defer ident.Close()
@@ -116,17 +114,15 @@ func clearFixtures() error {
 	for _, ident := range idents {
 		crt, err := ident.Certificate()
 		if err != nil {
-			return err
+			panic(err)
 		}
 
 		if isFixture(crt) {
 			if err := ident.Delete(); err != nil {
-				return err
+				panic(err)
 			}
 		}
 	}
-
-	return nil
 }
 
 func isFixture(crt *x509.Certificate) bool {

@@ -11,22 +11,22 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"golang.org/x/crypto/pkcs12"
+	"github.com/mastahyeti/fakeca"
 )
 
 func TestImportDeleteRSA(t *testing.T) {
-	ImportDeleteHelper(t, iRSA)
+	ImportDeleteHelper(t, leafRSA)
 }
 
 func TestImportDeleteECDSA(t *testing.T) {
-	ImportDeleteHelper(t, iEC)
+	ImportDeleteHelper(t, leafEC)
 }
 
 // ImportDeleteHelper is an abstraction for testing identity Import()/Delete().
-func ImportDeleteHelper(t *testing.T, i identityFixture) {
+func ImportDeleteHelper(t *testing.T, i *fakeca.Identity) {
 	withStore(t, func(store Store) {
 		// Import an identity
-		if err := store.Import(i.pfx(), "asdf"); err != nil {
+		if err := store.Import(i.PFX("asdf"), "asdf"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -46,7 +46,7 @@ func ImportDeleteHelper(t *testing.T, i identityFixture) {
 				t.Fatal(errr)
 			}
 
-			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
+			if i.Certificate.Equal(crt) {
 				if found != nil {
 					t.Fatal("duplicate identity imported")
 				}
@@ -79,7 +79,7 @@ func ImportDeleteHelper(t *testing.T, i identityFixture) {
 				t.Fatal(err)
 			}
 
-			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
+			if i.Certificate.Equal(crt) {
 				found = ident
 			}
 		}
@@ -90,17 +90,12 @@ func ImportDeleteHelper(t *testing.T, i identityFixture) {
 }
 
 func TestSignerRSA(t *testing.T) {
-	priv, crt, err := pkcs12.Decode(iRSA.pfx(), "asdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rsaPriv, ok := priv.(*rsa.PrivateKey)
+	rsaPriv, ok := leafRSA.PrivateKey.(*rsa.PrivateKey)
 	if !ok {
 		t.Fatal("expected priv to be an RSA private key")
 	}
 
-	withIdentity(t, iRSA, func(ident Identity) {
+	withIdentity(t, leafRSA, func(ident Identity) {
 		signer, err := ident.Signer()
 		if err != nil {
 			t.Fatal(err)
@@ -127,7 +122,7 @@ func TestSignerRSA(t *testing.T) {
 			// SHA1 should be supported by all platforms.
 			t.Fatal(err)
 		}
-		if err = crt.CheckSignature(x509.SHA1WithRSA, []byte("hello"), sig); err != nil {
+		if err = leafRSA.Certificate.CheckSignature(x509.SHA1WithRSA, []byte("hello"), sig); err != nil {
 			t.Fatal(err)
 		}
 
@@ -139,7 +134,7 @@ func TestSignerRSA(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		} else {
-			if err = crt.CheckSignature(x509.SHA256WithRSA, []byte("hello"), sig); err != nil {
+			if err = leafRSA.Certificate.CheckSignature(x509.SHA256WithRSA, []byte("hello"), sig); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -152,7 +147,7 @@ func TestSignerRSA(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		} else {
-			if err = crt.CheckSignature(x509.SHA384WithRSA, []byte("hello"), sig); err != nil {
+			if err = leafRSA.Certificate.CheckSignature(x509.SHA384WithRSA, []byte("hello"), sig); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -165,7 +160,7 @@ func TestSignerRSA(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		} else {
-			if err = crt.CheckSignature(x509.SHA512WithRSA, []byte("hello"), sig); err != nil {
+			if err = leafRSA.Certificate.CheckSignature(x509.SHA512WithRSA, []byte("hello"), sig); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -186,17 +181,12 @@ func TestSignerRSA(t *testing.T) {
 }
 
 func TestSignerECDSA(t *testing.T) {
-	priv, crt, err := pkcs12.Decode(iEC.pfx(), "asdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ecPriv, ok := priv.(*ecdsa.PrivateKey)
+	ecPriv, ok := leafEC.PrivateKey.(*ecdsa.PrivateKey)
 	if !ok {
 		t.Fatal("expected priv to be an ECDSA private key")
 	}
 
-	withIdentity(t, iEC, func(ident Identity) {
+	withIdentity(t, leafEC, func(ident Identity) {
 		signer, err := ident.Signer()
 		if err != nil {
 			t.Fatal(err)
@@ -222,7 +212,7 @@ func TestSignerECDSA(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = crt.CheckSignature(x509.ECDSAWithSHA1, []byte("hello"), sig); err != nil {
+		if err = leafEC.Certificate.CheckSignature(x509.ECDSAWithSHA1, []byte("hello"), sig); err != nil {
 			t.Fatal(err)
 		}
 
@@ -232,7 +222,7 @@ func TestSignerECDSA(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = crt.CheckSignature(x509.ECDSAWithSHA256, []byte("hello"), sig); err != nil {
+		if err = leafEC.Certificate.CheckSignature(x509.ECDSAWithSHA256, []byte("hello"), sig); err != nil {
 			t.Fatal(err)
 		}
 
@@ -242,7 +232,7 @@ func TestSignerECDSA(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = crt.CheckSignature(x509.ECDSAWithSHA384, []byte("hello"), sig); err != nil {
+		if err = leafEC.Certificate.CheckSignature(x509.ECDSAWithSHA384, []byte("hello"), sig); err != nil {
 			t.Fatal(err)
 		}
 
@@ -252,7 +242,7 @@ func TestSignerECDSA(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = crt.CheckSignature(x509.ECDSAWithSHA512, []byte("hello"), sig); err != nil {
+		if err = leafEC.Certificate.CheckSignature(x509.ECDSAWithSHA512, []byte("hello"), sig); err != nil {
 			t.Fatal(err)
 		}
 
@@ -265,77 +255,42 @@ func TestSignerECDSA(t *testing.T) {
 }
 
 func TestCertificateRSA(t *testing.T) {
-	_, crtExpected, err := pkcs12.Decode(iRSA.pfx(), "asdf")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	withIdentity(t, iCA, func(caIdent Identity) {
-		caActual, err := caIdent.Certificate()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		withIdentity(t, iRSA, func(ident Identity) {
-			crtActual, err := ident.Certificate()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !crtActual.Equal(crtExpected) {
-				t.Fatal("Expected cert to match pfx")
-			}
-
-			chain, err := ident.CertificateChain()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(chain) != 2 {
-				t.Fatal("bad chain")
-			}
-			if !crtActual.Equal(chain[0]) {
-				t.Fatal("first chain cert should be leaf")
-			}
-			if !caActual.Equal(chain[1]) {
-				t.Fatal("second chain cert should be CA")
-			}
-		})
-	})
+	CertificateHelper(t, leafRSA)
 }
 
 func TestCertificateEC(t *testing.T) {
-	_, crtExpected, err := pkcs12.Decode(iEC.pfx(), "asdf")
-	if err != nil {
-		t.Fatal(err)
-	}
+	CertificateHelper(t, leafEC)
+}
 
-	withIdentity(t, iCA, func(caIdent Identity) {
-		caActual, err := caIdent.Certificate()
-		if err != nil {
-			t.Fatal(err)
-		}
+func CertificateHelper(t *testing.T, leaf *fakeca.Identity) {
+	withIdentity(t, root, func(caIdent Identity) {
+		withIdentity(t, intermediate, func(interIdent Identity) {
+			withIdentity(t, leaf, func(leafIdent Identity) {
+				crtActual, err := leafIdent.Certificate()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !leaf.Certificate.Equal(crtActual) {
+					t.Fatal("Expected cert to match pfx")
+				}
 
-		withIdentity(t, iEC, func(ident Identity) {
-			crtActual, err := ident.Certificate()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !crtActual.Equal(crtExpected) {
-				t.Fatal("Expected cert to match pfx")
-			}
-
-			chain, err := ident.CertificateChain()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(chain) != 2 {
-				t.Fatal("bad chain")
-			}
-			if !crtActual.Equal(chain[0]) {
-				t.Fatal("first chain cert should be leaf")
-			}
-			if !caActual.Equal(chain[1]) {
-				t.Fatal("second chain cert should be CA")
-			}
+				chain, err := leafIdent.CertificateChain()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(chain) != 3 {
+					t.Fatal("bad chain")
+				}
+				if !leaf.Certificate.Equal(chain[0]) {
+					t.Fatal("first chain cert should be leaf")
+				}
+				if !intermediate.Certificate.Equal(chain[1]) {
+					t.Fatal("second chain cert should be intermediate")
+				}
+				if !root.Certificate.Equal(chain[2]) {
+					t.Fatal("second chain cert should be intermediate")
+				}
+			})
 		})
 	})
 }

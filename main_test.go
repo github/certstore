@@ -1,60 +1,40 @@
 package certstore
 
 import (
-	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
-	"io"
-	"os"
+	"crypto/x509/pkix"
 	"testing"
+
+	"github.com/mastahyeti/fakeca"
 )
 
-type identityFixture int
+var (
+	root = fakeca.New(fakeca.IsCA, fakeca.Subject(pkix.Name{
+		Organization: []string{"certstore"},
+		CommonName:   "root",
+	}))
 
-const (
-	iRSA identityFixture = iota
-	iEC
-	iCA
+	intermediate = root.Issue(fakeca.IsCA, fakeca.Subject(pkix.Name{
+		Organization: []string{"certstore"},
+		CommonName:   "root",
+	}))
+
+	leafKeyRSA, _ = rsa.GenerateKey(rand.Reader, 2048)
+	leafRSA       = intermediate.Issue(fakeca.PrivateKey(leafKeyRSA), fakeca.Subject(pkix.Name{
+		Organization: []string{"certstore"},
+		CommonName:   "leaf-rsa",
+	}))
+
+	leafKeyEC, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	leafEC       = intermediate.Issue(fakeca.PrivateKey(leafKeyEC), fakeca.Subject(pkix.Name{
+		Organization: []string{"certstore"},
+		CommonName:   "leaf-ec",
+	}))
 )
-
-func (i identityFixture) pfx() []byte {
-	var path string
-	switch i {
-	case iRSA:
-		path = "test_data/certstore-rsa.pfx"
-	case iEC:
-		path = "test_data/certstore-ec.pfx"
-	case iCA:
-		path = "test_data/certstore-ca.pfx"
-	default:
-		panic("bad fixture")
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	buf := new(bytes.Buffer)
-	if _, err := io.Copy(buf, f); err != nil {
-		panic(err)
-	}
-
-	return buf.Bytes()
-}
-
-func (i identityFixture) cn() string {
-	switch i {
-	case iRSA:
-		return "rsa"
-	case iEC:
-		return "ec"
-	case iCA:
-		return "ca"
-	}
-
-	panic("bad fixture")
-}
 
 func init() {
 	// delete any fixtures from a previous test run.
@@ -73,10 +53,10 @@ func withStore(t *testing.T, cb func(Store)) {
 	cb(store)
 }
 
-func withIdentity(t *testing.T, i identityFixture, cb func(Identity)) {
+func withIdentity(t *testing.T, i *fakeca.Identity, cb func(Identity)) {
 	withStore(t, func(store Store) {
 		// Import an identity
-		if err := store.Import(i.pfx(), "asdf"); err != nil {
+		if err := store.Import(i.PFX("asdf"), "asdf"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -96,7 +76,7 @@ func withIdentity(t *testing.T, i identityFixture, cb func(Identity)) {
 				t.Fatal(err)
 			}
 
-			if isFixture(crt) && crt.Subject.CommonName == i.cn() {
+			if i.Certificate.Equal(crt) {
 				if found != nil {
 					t.Fatal("duplicate identity imported")
 				}

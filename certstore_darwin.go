@@ -41,6 +41,10 @@ func (s macStore) Identities() ([]Identity, error) {
 
 	var absResult C.CFTypeRef
 	if err := osStatusError(C.SecItemCopyMatching(query, &absResult)); err != nil {
+		if err == errSecItemNotFound {
+			return []Identity{}, nil
+		}
+
 		return nil, err
 	}
 	defer C.CFRelease(C.CFTypeRef(absResult))
@@ -344,6 +348,10 @@ func bytesToCFData(gobytes []byte) (C.CFDataRef, error) {
 
 // osStatus wraps a C.OSStatus
 type osStatus C.OSStatus
+
+const (
+	errSecItemNotFound = osStatus(C.errSecItemNotFound)
+)
 
 // osStatusError returns an error for an OSStatus unless it is errSecSuccess.
 func osStatusError(s C.OSStatus) error {

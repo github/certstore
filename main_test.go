@@ -18,8 +18,6 @@ func init() {
 }
 
 func withStore(t *testing.T, cb func(Store)) {
-	t.Helper()
-
 	store, err := Open()
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +28,6 @@ func withStore(t *testing.T, cb func(Store)) {
 }
 
 func withIdentity(t *testing.T, pfx []byte, password string, cb func(Identity)) {
-	t.Helper()
-
 	withStore(t, func(store Store) {
 		// Import an identity
 		if err := store.Import(pfx, password); err != nil {

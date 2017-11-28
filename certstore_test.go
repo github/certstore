@@ -24,8 +24,6 @@ func TestImportDeleteECDSA(t *testing.T) {
 
 // ImportDeleteHelper is an abstraction for testing identity Import()/Delete().
 func ImportDeleteHelper(t *testing.T, pfx []byte, password string) {
-	t.Helper()
-
 	withStore(t, func(store Store) {
 		// Import an identity
 		if err := store.Import(pfx, password); err != nil {

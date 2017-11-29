@@ -35,6 +35,9 @@ type Identity interface {
 	// Certificate gets the identity's certificate.
 	Certificate() (*x509.Certificate, error)
 
+	// CertificateChain attempts to get the identity's full certificate chain.
+	CertificateChain() ([]*x509.Certificate, error)
+
 	// Signer gets a crypto.Signer that uses the identity's private key.
 	Signer() (crypto.Signer, error)
 

@@ -91,27 +91,61 @@ func openStore() (*winStore, error) {
 // Identities implements the Store interface.
 func (s *winStore) Identities() ([]Identity, error) {
 	var (
-		ctx      = C.PCCERT_CONTEXT(nil)
-		encoding = C.DWORD(C.X509_ASN_ENCODING | C.PKCS_7_ASN_ENCODING)
-		idents   = []Identity{}
+		err    error
+		idents = []Identity{}
+
+		// CertFindChainInStore parameters
+		encoding  = C.DWORD(C.X509_ASN_ENCODING)
+		flags     = C.DWORD(C.CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_FLAG | C.CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_URL_FLAG)
+		findType  = C.DWORD(C.CERT_CHAIN_FIND_BY_ISSUER)
+		params    = &C.CERT_CHAIN_FIND_BY_ISSUER_PARA{cbSize: C.DWORD(unsafe.Sizeof(C.CERT_CHAIN_FIND_BY_ISSUER_PARA{}))}
+		paramsPtr = unsafe.Pointer(params)
+		chainCtx  = C.PCCERT_CHAIN_CONTEXT(nil)
 	)
 
 	for {
-		if ctx = C.CertFindCertificateInStore(s.store, encoding, 0, C.CERT_FIND_ANY, nil, ctx); ctx == nil {
+		if chainCtx = C.CertFindChainInStore(s.store, encoding, flags, findType, paramsPtr, chainCtx); chainCtx == nil {
 			break
 		}
+		if chainCtx.cChain < 1 {
+			err = errors.New("bad chain")
+			goto fail
+		}
 
-		idents = append(idents, newWinIdentity(ctx))
+		// maximum chain length. this is arbitrary
+		const maxChain = 1 << 30
+
+		// rgpChain is actually an array, but we only care about the first one.
+		simpleChain := *chainCtx.rgpChain
+		if simpleChain.cElement < 1 || simpleChain.cElement > maxChain {
+			err = errors.New("bad chain")
+			goto fail
+		}
+
+		// Hacky way to get chain elements (c array) as a slice.
+		chainElts := (*[maxChain]C.PCERT_CHAIN_ELEMENT)(unsafe.Pointer(simpleChain.rgpElement))[:simpleChain.cElement:simpleChain.cElement]
+
+		// Build chain of certificates from each elt's certificate context.
+		chain := make([]C.PCCERT_CONTEXT, len(chainElts))
+		for j := range chainElts {
+			chain[j] = chainElts[j].pCertContext
+		}
+
+		idents = append(idents, newWinIdentity(chain))
 	}
 
-	if err := lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != errCode(CRYPT_E_NOT_FOUND) {
-		for _, ident := range idents {
-			ident.Close()
-		}
-		return nil, err
+	if err = lastError("failed to iterate certs in store"); err != nil && errors.Cause(err) != errCode(CRYPT_E_NOT_FOUND) {
+		goto fail
 	}
 
 	return idents, nil
+
+fail:
+	for _, ident := range idents {
+		ident.Close()
+	}
+
+	return nil, err
 }
 
 // Import implements the Store interface.
@@ -174,24 +208,37 @@ func (s *winStore) Close() {
 
 // winIdentity implements the Identity iterface.
 type winIdentity struct {
-	ctx    C.PCCERT_CONTEXT
+	chain  []C.PCCERT_CONTEXT
 	signer *winPrivateKey
 }
 
-func newWinIdentity(ctx C.PCCERT_CONTEXT) *winIdentity {
-	return &winIdentity{ctx: C.CertDuplicateCertificateContext(ctx)}
+func newWinIdentity(chain []C.PCCERT_CONTEXT) *winIdentity {
+	for _, ctx := range chain {
+		C.CertDuplicateCertificateContext(ctx)
+	}
+
+	return &winIdentity{chain: chain}
 }
 
 // Certificate implements the Identity iterface.
 func (i *winIdentity) Certificate() (*x509.Certificate, error) {
-	der := C.GoBytes(unsafe.Pointer(i.ctx.pbCertEncoded), C.int(i.ctx.cbCertEncoded))
+	return exportCertCtx(i.chain[0])
+}
 
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, errors.Wrap(err, "certificate parsing failed")
+// CertificateChain implements the Identity iterface.
+func (i *winIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	var (
+		certs = make([]*x509.Certificate, len(i.chain))
+		err   error
+	)
+
+	for j := range i.chain {
+		if certs[j], err = exportCertCtx(i.chain[j]); err != nil {
+			return nil, err
+		}
 	}
 
-	return cert, nil
+	return certs, nil
 }
 
 // Signer implements the Identity interface.
@@ -210,7 +257,7 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 		return nil, errors.Wrap(err, "failed to get identity certificate")
 	}
 
-	signer, err := newWinPrivateKey(i.ctx, cert.PublicKey)
+	signer, err := newWinPrivateKey(i.chain[0], cert.PublicKey)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load identity private key")
 	}
@@ -223,7 +270,7 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 // Delete implements the Identity iterface.
 func (i *winIdentity) Delete() error {
 	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
-	deleteCtx := C.CertDuplicateCertificateContext(i.ctx)
+	deleteCtx := C.CertDuplicateCertificateContext(i.chain[0])
 
 	// try deleting cert
 	if ok := C.CertDeleteCertificateFromStore(deleteCtx); ok == winFalse {
@@ -250,8 +297,10 @@ func (i *winIdentity) Close() {
 		i.signer = nil
 	}
 
-	C.CertFreeCertificateContext(i.ctx)
-	i.ctx = nil
+	for _, ctx := range i.chain {
+		C.CertFreeCertificateContext(ctx)
+		i.chain = nil
+	}
 }
 
 // winPrivateKey is a wrapper around a HCRYPTPROV_OR_NCRYPT_KEY_HANDLE.
@@ -547,6 +596,18 @@ func (wpk *winPrivateKey) Close() {
 		C.CryptReleaseContext(wpk.capiProv, 0)
 		wpk.capiProv = 0
 	}
+}
+
+// exportCertCtx exports a PCCERT_CONTEXT as an *x509.Certificate.
+func exportCertCtx(ctx C.PCCERT_CONTEXT) (*x509.Certificate, error) {
+	der := C.GoBytes(unsafe.Pointer(ctx.pbCertEncoded), C.int(ctx.cbCertEncoded))
+
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, errors.Wrap(err, "certificate parsing failed")
+	}
+
+	return cert, nil
 }
 
 type errCode uint64

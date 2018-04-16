@@ -271,9 +271,15 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		return nil, err
 	}
 
+	// Hack — algos is a SecKeyAlgorithm and SecKeyCreateSignature takes a
+	// SecKeyAlgorithm as its second argument. The compiler insists though that
+	// algos is a CFStringRef and that SecKeyCreateSignature wants a
+	// *C.struct___CFString as its second argument.
+	algoHack := (*C.struct___CFString)(unsafe.Pointer(algo))
+
 	// sign the digest
 	var cerr C.CFErrorRef
-	csig := C.SecKeyCreateSignature(kref, algo, cdigest, &cerr)
+	csig := C.SecKeyCreateSignature(kref, algoHack, cdigest, &cerr)
 
 	if err := cfErrorError(cerr); err != nil {
 		defer C.CFRelease(C.CFTypeRef(cerr))

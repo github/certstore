@@ -18,6 +18,12 @@ import (
 	"unsafe"
 )
 
+// work around https://github.com/golang/go/issues/24161
+var (
+	_ C.CFBooleanRef
+	_ C.SecPolicyRef
+)
+
 // macStore is a bogus type. We have to explicitly open/close the store on
 // windows, so we provide those methods here too.
 type macStore int

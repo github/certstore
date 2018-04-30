@@ -614,8 +614,8 @@ type errCode uint64
 
 // lastError gets the last error from the current thread.
 func lastError(msg string) error {
-	if code := errCode(C.GetLastError(); code != 0 {
-		return errors.Wrap(code), msg)
+	if code := errCode(C.GetLastError()); code != 0 {
+		return errors.Wrap(code, msg)
 	}
 
 	return nil

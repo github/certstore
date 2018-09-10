@@ -32,6 +32,8 @@ before_test:
   - set PATH=C:\%MSYS2_DIR%\%MSYSTEM%\bin;C:\%MSYS2_DIR%\usr\bin;%PATH%
   # Install build deps
   - bash -lc "for n in `seq 1 3`; do pacman --noconfirm -S mingw-w64-%MSYS2_ARCH%-libtool && break || sleep 15; done"
+  # Install Go deps
+  - go get -t -v ./...
 
 test_script:
   - go test -v ./...

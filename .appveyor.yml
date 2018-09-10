@@ -21,7 +21,7 @@ environment:
 
 clone_folder: C:\gopath\src\github.com\mastahyeti\certstore
 
-before_build:
+before_test:
   # Ensure CGO is enabled
   - set CGO_ENABLED=1
   # Go paths

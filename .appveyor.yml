@@ -1,3 +1,4 @@
+skip_branch_with_pr: true
 os: 'Visual Studio 2015'
 
 build: off

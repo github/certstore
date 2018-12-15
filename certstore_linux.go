@@ -2,8 +2,9 @@ package certstore
 
 /*
 #cgo CFLAGS: -I/usr/include/nss -I/usr/include/nspr
-#cgo LDFLAGS: -lnss3
+#cgo LDFLAGS: -lnss3 -lnspr4
 #include <nss.h>
+#include <prerror.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
@@ -34,7 +35,7 @@ func openStore() (Store, error) {
 			var e syscall.Errno
 			err = errors.New(e.Error())
 		}
-		return nil, errors.New(fmt.Sprintf("There was an error (%s) wen getting user info\n", error(err)))
+		return nil, errors.New(fmt.Sprintf("There was an error (%s) when getting user info\n", error(err)))
 	} else {
 		passwd = &Passwd{
 			PwName:   C.GoString(passwdC.pw_name),
@@ -50,11 +51,16 @@ func openStore() (Store, error) {
 	if passwd == nil {
 		return nil, errors.New("Cannot locate nssdb store!\n")
 	}
-	name := fmt.Sprintf("sql:%s/.pki/nssdb/", passwd.PwDir)
+	name := fmt.Sprintf("sql:/%s/.pki/nssdb/", passwd.PwDir)
 	nameC := C.CString(name)
 	defer C.free(unsafe.Pointer(nameC))
 	fmt.Printf("Opening: %s\n", name)
-	//C.NSS_InitReadWrite()
-	//C.NSS_Shutdown()
+	nss := C.NSS_InitReadWrite(nameC)
+	if nss != 0 {
+		C.NSS_Shutdown()
+		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
+	}
+	fmt.Printf("Ceertificate store opened... closing it...\n")
+	C.NSS_Shutdown()
 	return nil, errors.New("Not using NSS yet!\n")
 }

@@ -4,10 +4,14 @@ package certstore
 #cgo CFLAGS: -I/usr/include/nss -I/usr/include/nspr
 #cgo LDFLAGS: -lnss3 -lnspr4
 #include <nss.h>
+#include <pk11pub.h>
+#include <nspr.h>
+#include <prio.h>
 #include <prerror.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+
 */
 import "C"
 import (
@@ -60,7 +64,24 @@ func openStore() (Store, error) {
 		C.NSS_Shutdown()
 		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
 	}
-	fmt.Printf("Ceertificate store opened... closing it...\n")
+	fmt.Printf("Listing certificaes:\n")
+	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
+	if certs == nil {
+		C.NSS_Shutdown()
+		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
+	}
+	var certs_list = certs.list
+	var node = (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&certs_list)))
+	var node_links = node.links
+	showCert(C.GoString(node.cert.subjectName))
+	for ; certs_list != node_links; node_links = *node.links.next {
+		node = (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&node_links)))
+		showCert(C.GoString(node.cert.subjectName))
+	}
 	C.NSS_Shutdown()
 	return nil, errors.New("Not using NSS yet!\n")
+}
+
+func showCert(s string) {
+	fmt.Printf("Cetificate: %s\n", s)
 }

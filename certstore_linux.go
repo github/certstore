@@ -30,6 +30,24 @@ type Passwd struct {
 	PwDir    string
 	PwShell  string
 }
+type nssStore int
+
+func (nssStore) Identities() ([]Identity, error) {
+	return []Identity{}, nil
+}
+
+func (nssStore) Import(data []byte, password string) error {
+	var p12 = C.SECITEM_AllocItem(nil, nil, C.uint(len(data)))
+	if p12 == nil {
+		return errors.New("SECITEM_AllocItem failed")
+	}
+	fmt.Printf("p12 : %p\n", p12)
+	return nil
+}
+
+func (nssStore) Close() {
+	//C.NSS_Shutdown()
+}
 
 func openStore() (Store, error) {
 	var passwd *Passwd = nil
@@ -55,7 +73,7 @@ func openStore() (Store, error) {
 	if passwd == nil {
 		return nil, errors.New("Cannot locate nssdb store!\n")
 	}
-	name := fmt.Sprintf("sql:/%s/.pki/nssdb/", passwd.PwDir)
+	name := fmt.Sprintf("sql:/%s/.pki-test/nssdb/", passwd.PwDir)
 	nameC := C.CString(name)
 	defer C.free(unsafe.Pointer(nameC))
 	fmt.Printf("Opening: %s\n", name)
@@ -70,18 +88,30 @@ func openStore() (Store, error) {
 		C.NSS_Shutdown()
 		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
 	}
-	var certs_list = certs.list
-	var node = (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&certs_list)))
-	var node_links = node.links
-	showCert(C.GoString(node.cert.subjectName))
-	for ; certs_list != node_links; node_links = *node.links.next {
-		node = (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&node_links)))
+	var list *C.CERTCertList
+	var node *C.CERTCertListNode
+	list = certs
+	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
 		showCert(C.GoString(node.cert.subjectName))
 	}
-	C.NSS_Shutdown()
-	return nil, errors.New("Not using NSS yet!\n")
+	return nssStore(0), nil
 }
 
 func showCert(s string) {
 	fmt.Printf("Cetificate: %s\n", s)
+}
+
+func CertListHead(l *C.CERTCertList) *C.CERTCertListNode {
+	var list = l.list
+	return (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&list)))
+}
+
+func CertListNext(n *C.CERTCertListNode) *C.CERTCertListNode {
+	var list = n.links
+	return (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&list)))
+}
+
+func CertListEnd(n *C.CERTCertListNode, l *C.CERTCertList) bool {
+	var list = l.list
+	return *(*unsafe.Pointer)(unsafe.Pointer(n)) == *(*unsafe.Pointer)(unsafe.Pointer(&list))
 }

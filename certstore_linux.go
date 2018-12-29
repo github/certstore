@@ -2,7 +2,7 @@ package certstore
 
 /*
 #cgo CFLAGS: -I/usr/include/nss -I/usr/include/nspr
-#cgo LDFLAGS: -lnss3 -lnspr4
+#cgo LDFLAGS: -lnss3 -lnspr4 -lsmime3
 #include <nss.h>
 #include <pk11pub.h>
 #include <nspr.h>
@@ -11,13 +11,48 @@ package certstore
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <p12.h>
+#include <p12plcy.h>
+#include <stdlib.h>
 
+SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void *wincx) {
+	char *nick = NULL;
+	SECItem *ret_nick = NULL;
+	CERTCertificate *cert = (CERTCertificate *)wincx;
+	if (!cancel || !cert) {
+		fprintf(stdout, "cancel: %p, cert: %p\n", cancel, cert);
+		return NULL;
+	}
+	nick = CERT_MakeCANickname(cert);
+	if (!nick) {
+		fprintf(stdout, "nick %p\n", nick);
+		return NULL;
+	}
+	if (old_nick && old_nick->data && old_nick->len &&
+		PORT_Strlen(nick) == old_nick->len &&
+		!PORT_Strncmp((char *)old_nick->data, nick, old_nick->len)) {
+		PORT_Free(nick);
+		fprintf(stdout, "old_nick %p, nick %p\n", old_nick, nick);
+		return NULL;
+    }
+	fprintf(stdout, "using nickname: %s\n", nick);
+	ret_nick = PORT_ZNew(SECItem);
+	if (ret_nick == NULL) {
+		PORT_Free(nick);
+		fprintf(stdout, "ret_nick %p\n", ret_nick);
+		return NULL;
+	}
+	ret_nick->data = (unsigned char *)nick;
+	ret_nick->len = PORT_Strlen(nick);
+	return ret_nick;
+}
 */
 import "C"
 import (
 	"errors"
 	"fmt"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -37,11 +72,32 @@ func (nssStore) Identities() ([]Identity, error) {
 }
 
 func (nssStore) Import(data []byte, password string) error {
-	var p12 = C.SECITEM_AllocItem(nil, nil, C.uint(len(data)))
-	if p12 == nil {
+	unicode_password, err := bmpString(password)
+	if unicode_password == nil {
+		return err
+	}
+	var pass = C.SECITEM_AllocItem(nil, nil, C.uint(len(unicode_password)))
+	if pass == nil {
 		return errors.New("SECITEM_AllocItem failed")
 	}
-	fmt.Printf("p12 : %p\n", p12)
+	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicode_password[0]), C.size_t(len(unicode_password)))
+	var p12 = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
+	var decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	if decoded != 0 {
+		return errors.New(fmt.Sprintf("Error %d, P12 decoding failed...\n", int(C.PR_GetError())))
+	}
+	var authenticated = C.SEC_PKCS12DecoderVerify(p12)
+	if authenticated != 0 {
+		return errors.New(fmt.Sprintf("Error %d, P12 authentication failed...\n", int(C.PR_GetError())))
+	}
+	var validated = C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
+	if validated != 0 {
+		return errors.New(fmt.Sprintf("Error %d, P12 validation failed...\n", int(C.PR_GetError())))
+	}
+	var imported = C.SEC_PKCS12DecoderImportBags(p12)
+	if imported != 0 {
+		return errors.New(fmt.Sprintf("Error %d, P12 import failed...\n", int(C.PR_GetError())))
+	}
 	return nil
 }
 
@@ -94,6 +150,16 @@ func openStore() (Store, error) {
 	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
 		showCert(C.GoString(node.cert.subjectName))
 	}
+	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_RC2_CBC_40, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_RC2_CBC_128, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_DES_56, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_DES_EDE3_168, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_128, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_192, 1)
+	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_256, 1)
+	C.SEC_PKCS12SetPreferredCipher(C.PKCS12_DES_EDE3_168, 1)
 	return nssStore(0), nil
 }
 
@@ -114,4 +180,15 @@ func CertListNext(n *C.CERTCertListNode) *C.CERTCertListNode {
 func CertListEnd(n *C.CERTCertListNode, l *C.CERTCertList) bool {
 	var list = l.list
 	return *(*unsafe.Pointer)(unsafe.Pointer(n)) == *(*unsafe.Pointer)(unsafe.Pointer(&list))
+}
+
+func bmpString(s string) ([]byte, error) {
+	ret := make([]byte, 0, 2*len(s)+2)
+	for _, r := range s {
+		if t, _ := utf16.EncodeRune(r); t != 0xfffd {
+			return nil, errors.New("pkcs12: string contains characters that cannot be encoded in UCS-2")
+		}
+		ret = append(ret, byte(r/256), byte(r%256))
+	}
+	return append(ret, 0, 0), nil
 }

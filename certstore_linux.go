@@ -14,6 +14,7 @@ package certstore
 #include <p12.h>
 #include <p12plcy.h>
 #include <stdlib.h>
+#include <cryptohi.h>
 
 SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void *wincx) {
 	char *nick = NULL;
@@ -49,8 +50,11 @@ SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void 
 */
 import "C"
 import (
+	"crypto"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -68,19 +72,107 @@ type Passwd struct {
 type nssStore int
 
 func (nssStore) Identities() ([]Identity, error) {
-	return []Identity{}, nil
+	var identities = make([]Identity, 0)
+	fmt.Printf("Listing certificaes:\n")
+	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
+	if certs == nil {
+		C.NSS_Shutdown()
+		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
+	}
+	var list *C.CERTCertList
+	var node *C.CERTCertListNode
+	list = certs
+	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
+		identities = append(identities, newNssIdentity(node))
+		showCert(C.GoString(node.cert.subjectName))
+	}
+	return identities, nil
+}
+
+type nssIdentity struct {
+	node *C.CERTCertListNode
+}
+
+type nssPrivateKey struct {
+	node *C.CERTCertListNode
+}
+
+func (i *nssIdentity) Signer() (crypto.Signer, error) {
+	return i.newNssPrivateKey()
+}
+
+func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
+	var der = i.node.cert.derCert
+	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	cert, err := x509.ParseCertificate(bytes)
+	if err != nil {
+		return nil, err
+	}
+	return cert, nil
+}
+
+func (nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	return nil, nil
+}
+
+func (nssIdentity) Delete() error {
+	return nil
+}
+
+func (nssIdentity) Close() {
+}
+
+func (i *nssIdentity) newNssPrivateKey() (*nssPrivateKey, error) {
+	return &nssPrivateKey{node: i.node}, nil
+}
+
+func (i *nssPrivateKey) Public() crypto.PublicKey {
+	var der = i.node.cert.derCert
+	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	cert, err := x509.ParseCertificate(bytes)
+	if err != nil {
+		return nil
+	}
+	return cert.PublicKey
+}
+
+func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	hash := opts.HashFunc()
+	if len(digest) != hash.Size() {
+		return nil, errors.New("bad digest for hash")
+	}
+	privKey := C.PK11_FindKeyByAnyCert(i.node.cert, nil);
+	if privKey == nil {
+		return nil, errors.New("cannot find private key")
+	}
+	algId := C.SEC_GetSignatureAlgorithmOidTag(privKey.keyType, C.CKM_RSA_PKCS)
+	if algId == 0 {
+		return nil, errors.New("cannot find algo")
+	}
+	sd := &C.SECItem{}
+	fmt.Printf("%p:\n", unsafe.Pointer(sd))
+	ret := C.SEC_SignData(sd, (*C.uchar)(unsafe.Pointer(&digest[0])), C.int(len(digest)), privKey, algId);
+	if ret != 0 {
+		return nil, errors.New("could not sign")
+	}
+	var sig = C.GoBytes(unsafe.Pointer(sd.data), C.int(sd.len))
+	return sig, nil
+}
+
+func newNssIdentity(node *C.CERTCertListNode) *nssIdentity {
+	return &nssIdentity{node: node}
 }
 
 func (nssStore) Import(data []byte, password string) error {
-	unicode_password, err := bmpString(password)
-	if unicode_password == nil {
+	unicodePassword, err := bmpString(password)
+	if unicodePassword == nil {
 		return err
 	}
-	var pass = C.SECITEM_AllocItem(nil, nil, C.uint(len(unicode_password)))
+	var pass = C.SECITEM_AllocItem(nil, nil, C.uint(len(unicodePassword)))
 	if pass == nil {
 		return errors.New("SECITEM_AllocItem failed")
 	}
-	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicode_password[0]), C.size_t(len(unicode_password)))
+	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicodePassword[0]), C.size_t(len(unicodePassword)))
 	var p12 = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
 	var decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
 	if decoded != 0 {
@@ -102,7 +194,6 @@ func (nssStore) Import(data []byte, password string) error {
 }
 
 func (nssStore) Close() {
-	//C.NSS_Shutdown()
 }
 
 func openStore() (Store, error) {
@@ -137,18 +228,6 @@ func openStore() (Store, error) {
 	if nss != 0 {
 		C.NSS_Shutdown()
 		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
-	}
-	fmt.Printf("Listing certificaes:\n")
-	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
-	if certs == nil {
-		C.NSS_Shutdown()
-		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
-	}
-	var list *C.CERTCertList
-	var node *C.CERTCertListNode
-	list = certs
-	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
-		showCert(C.GoString(node.cert.subjectName))
 	}
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)

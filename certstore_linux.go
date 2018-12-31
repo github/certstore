@@ -302,7 +302,7 @@ func openStore() (Store, error) {
 	if passwd == nil {
 		return nil, errors.New("Cannot locate nssdb store!\n")
 	}
-	name := fmt.Sprintf("sql:/%s/.pki-test/nssdb/", passwd.PwDir)
+	name := fmt.Sprintf("sql:/%s/.pki/nssdb/", passwd.PwDir)
 	nameC := C.CString(name)
 	defer C.free(unsafe.Pointer(nameC))
 	//fmt.Printf("Opening: %s\n", name)

@@ -36,7 +36,7 @@ SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void 
 		fprintf(stdout, "old_nick %p, nick %p\n", old_nick, nick);
 		return NULL;
     }
-	fprintf(stdout, "using nickname: %s\n", nick);
+	//fprintf(stdout, "using nickname: %s\n", nick);
 	ret_nick = PORT_ZNew(SECItem);
 	if (ret_nick == NULL) {
 		PORT_Free(nick);
@@ -73,7 +73,7 @@ type nssStore int
 
 func (nssStore) Identities() ([]Identity, error) {
 	var identities = make([]Identity, 0)
-	fmt.Printf("Listing certificaes:\n")
+	//fmt.Printf("Listing certificates:\n")
 	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
 	if certs == nil {
 		C.NSS_Shutdown()
@@ -111,11 +111,51 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 	return cert, nil
 }
 
-func (nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
-	return nil, nil
+func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	var der = i.node.cert.derCert
+	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	cert, err := x509.ParseCertificate(bytes)
+	if err != nil {
+		return nil, err
+	}
+	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
+	if certs == nil {
+		return nil, errors.New(fmt.Sprintf("Error %d, cannot list certificates...\n", int(C.PR_GetError())))
+	}
+	var list *C.CERTCertList
+	var node *C.CERTCertListNode
+	list = certs
+	var identities = make([]Identity, 0)
+	var certificates = make([]*x509.Certificate, 0)
+	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
+		identities = append(identities, newNssIdentity(node))
+		showCert(C.GoString(node.cert.subjectName))
+	}
+	certificates = append(certificates, cert)
+	found := true
+	for found != false {
+		found = false
+		cert = certificates[len(certificates)-1]
+		issuer := cert.Issuer.String()
+		for i := 0; i < len(identities); i++ {
+			cert, err = identities[i].Certificate()
+			if cert == nil {
+				return nil, errors.New(fmt.Sprintf("Error %d, cannot fetch certificate...\n", int(C.PR_GetError())))
+			}
+			subject := cert.Subject.String()
+			root := certificates[len(certificates)-1].Subject.String()
+			if subject == issuer && subject != root {
+				certificates = append(certificates, cert)
+				found = true
+				break
+			}
+		}
+	}
+	return certificates, nil
 }
 
-func (nssIdentity) Delete() error {
+func (i *nssIdentity) Delete() error {
+	C.PK11_DeleteTokenCertAndKey(i.node.cert, nil)
 	return nil
 }
 
@@ -141,17 +181,42 @@ func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
 	}
-	privKey := C.PK11_FindKeyByAnyCert(i.node.cert, nil);
-	if privKey == nil {
+	key := C.PK11_FindKeyByAnyCert(i.node.cert, nil)
+	if key == nil {
 		return nil, errors.New("cannot find private key")
 	}
-	algId := C.SEC_GetSignatureAlgorithmOidTag(privKey.keyType, C.CKM_RSA_PKCS)
-	if algId == 0 {
-		return nil, errors.New("cannot find algo")
+	sd := C.SECITEM_AllocItem(nil, nil, C.uint(C.PK11_SignatureLen(key)))
+	hashed := C.SECITEM_AllocItem(nil, nil, C.uint(len(digest)))
+	if hashed == nil {
+		return nil, errors.New("SECITEM_AllocItem failed")
 	}
-	sd := &C.SECItem{}
-	fmt.Printf("%p:\n", unsafe.Pointer(sd))
-	ret := C.SEC_SignData(sd, (*C.uchar)(unsafe.Pointer(&digest[0])), C.int(len(digest)), privKey, algId);
+	C.memcpy(unsafe.Pointer(hashed.data), unsafe.Pointer(&digest[0]), C.size_t(len(digest)))
+	var mechanism C.ulong
+	switch key.keyType {
+	case C.rsaKey:
+		switch hash {
+		case crypto.SHA1:
+			mechanism = C.CKM_SHA1_RSA_PKCS
+		case crypto.SHA256:
+			mechanism = C.CKM_SHA256_RSA_PKCS
+		case crypto.SHA384:
+			mechanism = C.CKM_SHA384_RSA_PKCS
+		case crypto.SHA512:
+			mechanism = C.CKM_SHA512_RSA_PKCS
+		default:
+			mechanism = C.CKM_RSA_PKCS
+		}
+	case C.ecKey:
+		switch hash {
+		case crypto.SHA1:
+			mechanism = C.CKM_ECDSA_SHA1
+		default:
+			mechanism = C.CKM_ECDSA
+		}
+	default:
+		return nil, errors.New(fmt.Sprintf("Unknown key type: %d", int(key.keyType)))
+	}
+	ret := C.PK11_SignWithMechanism(key, mechanism, nil, sd, hashed)
 	if ret != 0 {
 		return nil, errors.New("could not sign")
 	}
@@ -215,7 +280,7 @@ func openStore() (Store, error) {
 			PwDir:    C.GoString(passwdC.pw_dir),
 			PwShell:  C.GoString(passwdC.pw_shell),
 		}
-		fmt.Printf("Home directory is: %s\n", passwd.PwDir)
+		//fmt.Printf("Home directory is: %s\n", passwd.PwDir)
 	}
 	if passwd == nil {
 		return nil, errors.New("Cannot locate nssdb store!\n")
@@ -223,7 +288,7 @@ func openStore() (Store, error) {
 	name := fmt.Sprintf("sql:/%s/.pki-test/nssdb/", passwd.PwDir)
 	nameC := C.CString(name)
 	defer C.free(unsafe.Pointer(nameC))
-	fmt.Printf("Opening: %s\n", name)
+	//fmt.Printf("Opening: %s\n", name)
 	nss := C.NSS_InitReadWrite(nameC)
 	if nss != 0 {
 		C.NSS_Shutdown()
@@ -243,7 +308,7 @@ func openStore() (Store, error) {
 }
 
 func showCert(s string) {
-	fmt.Printf("Cetificate: %s\n", s)
+	//fmt.Printf("Cetificate: %s\n", s)
 }
 
 func CertListHead(l *C.CERTCertList) *C.CERTCertListNode {

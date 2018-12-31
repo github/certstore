@@ -52,9 +52,11 @@ import "C"
 import (
 	"crypto"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -221,6 +223,21 @@ func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 		return nil, errors.New("could not sign")
 	}
 	var sig = C.GoBytes(unsafe.Pointer(sd.data), C.int(sd.len))
+	if key.keyType == C.ecKey {
+		if len(sig)%2 != 0 {
+			return nil, errors.New("bad ecdsa signature")
+		}
+		type ecdsaSignature struct {
+			R, S *big.Int
+		}
+		r := new(big.Int).SetBytes(sig[:len(sig)/2])
+		s := new(big.Int).SetBytes(sig[len(sig)/2:])
+		asn, err := asn1.Marshal(ecdsaSignature{r, s})
+		if err != nil {
+			return nil, err
+		}
+		sig = asn
+	}
 	return sig, nil
 }
 

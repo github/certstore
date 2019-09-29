@@ -7,5 +7,15 @@ go:
   - 1.12.x
   - 1.x
 
-os: osx
+os:
+  - linux
+  - osx
+
+before_install:
+  - "[ \"${TRAVIS_OS_NAME:-}\" != linux ] || sudo apt-get -qq update"
+  - "[ \"${TRAVIS_OS_NAME:-}\" != linux ] || sudo apt-get install -y libnss3-dev libnss3-tools"
+  - "[ \"${TRAVIS_OS_NAME:-}\" != linux ] || mkdir -p ~/.pki/nssdb"
+  - "[ \"${TRAVIS_OS_NAME:-}\" != linux ] || certutil -N -d ~/.pki/nssdb --empty-password"
+
+
 osx_image: xcode9.1 # OS X 10.12 w/ Xcode 9.1

@@ -83,12 +83,8 @@ type nssIdentity struct {
 	node *C.CERTCertListNode
 }
 
-type nssPrivateKey struct {
-	node *C.CERTCertListNode
-}
-
 func (i *nssIdentity) Signer() (crypto.Signer, error) {
-	return i.newNssPrivateKey()
+	return i, nil
 }
 
 func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
@@ -151,21 +147,15 @@ func (i *nssIdentity) Delete() error {
 func (nssIdentity) Close() {
 }
 
-func (i *nssIdentity) newNssPrivateKey() (*nssPrivateKey, error) {
-	return &nssPrivateKey{node: i.node}, nil
-}
-
-func (i *nssPrivateKey) Public() crypto.PublicKey {
-	var der = i.node.cert.derCert
-	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
-	cert, err := x509.ParseCertificate(bytes)
-	if err != nil {
+func (i *nssIdentity) Public() crypto.PublicKey {
+	cert, _ := i.Certificate()
+	if cert == nil {
 		return nil
 	}
 	return cert.PublicKey
 }
 
-func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hash := opts.HashFunc()
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")

@@ -78,7 +78,7 @@ func (nssStore) Identities() ([]Identity, error) {
 	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
 	if certs == nil {
 		C.NSS_Shutdown()
-		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
+		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
 	}
 	var list *C.CERTCertList
 	var node *C.CERTCertListNode
@@ -120,7 +120,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	}
 	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
 	if certs == nil {
-		return nil, errors.New(fmt.Sprintf("Error %d, cannot list certificates...\n", int(C.PR_GetError())))
+		return nil, fmt.Errorf("Error %d, cannot list certificates...\n", int(C.PR_GetError()))
 	}
 	var list *C.CERTCertList
 	var node *C.CERTCertListNode
@@ -139,7 +139,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 		for i := 0; i < len(identities); i++ {
 			cert, err = identities[i].Certificate()
 			if cert == nil {
-				return nil, errors.New(fmt.Sprintf("Error %d, cannot fetch certificate...\n", int(C.PR_GetError())))
+				return nil, fmt.Errorf("Error %d, cannot fetch certificate...\n", int(C.PR_GetError()))
 			}
 			subject := cert.Subject.String()
 			root := certificates[len(certificates)-1].Subject.String()
@@ -233,7 +233,7 @@ func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 			mechanism = C.CKM_ECDSA
 		}
 	default:
-		return nil, errors.New(fmt.Sprintf("Unknown key type: %d", int(key.keyType)))
+		return nil, fmt.Errorf("Unknown key type: %d", int(key.keyType))
 	}
 	ret := C.PK11_SignWithMechanism(key, mechanism, nil, sd, hashed)
 	if ret != 0 {
@@ -275,19 +275,19 @@ func (nssStore) Import(data []byte, password string) error {
 	var p12 = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
 	var decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
 	if decoded != 0 {
-		return errors.New(fmt.Sprintf("Error %d, P12 decoding failed...\n", int(C.PR_GetError())))
+		return fmt.Errorf("Error %d, P12 decoding failed...\n", int(C.PR_GetError()))
 	}
 	var authenticated = C.SEC_PKCS12DecoderVerify(p12)
 	if authenticated != 0 {
-		return errors.New(fmt.Sprintf("Error %d, P12 authentication failed...\n", int(C.PR_GetError())))
+		return fmt.Errorf("Error %d, P12 authentication failed...\n", int(C.PR_GetError()))
 	}
 	var validated = C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
 	if validated != 0 {
-		return errors.New(fmt.Sprintf("Error %d, P12 validation failed...\n", int(C.PR_GetError())))
+		return fmt.Errorf("Error %d, P12 validation failed...\n", int(C.PR_GetError()))
 	}
 	var imported = C.SEC_PKCS12DecoderImportBags(p12)
 	if imported != 0 {
-		return errors.New(fmt.Sprintf("Error %d, P12 import failed...\n", int(C.PR_GetError())))
+		return fmt.Errorf("Error %d, P12 import failed...\n", int(C.PR_GetError()))
 	}
 	return nil
 }
@@ -303,7 +303,7 @@ func openStore() (Store, error) {
 			var e syscall.Errno
 			err = errors.New(e.Error())
 		}
-		return nil, errors.New(fmt.Sprintf("There was an error (%s) when getting user info\n", error(err)))
+		return nil, fmt.Errorf("There was an error (%s) when getting user info\n", error(err))
 	} else {
 		passwd = &Passwd{
 			PwName:   C.GoString(passwdC.pw_name),
@@ -323,10 +323,10 @@ func openStore() (Store, error) {
 	nameC := C.CString(name)
 	defer C.free(unsafe.Pointer(nameC))
 	//fmt.Printf("Opening: %s\n", name)
-	nss := C.NSS_InitReadWrite(nameC)
-	if nss != 0 {
+	ok := C.NSS_InitReadWrite(nameC)
+	if ok != 0 {
 		C.NSS_Shutdown()
-		return nil, errors.New(fmt.Sprintf("Error %d, closing and returing...\n", int(C.PR_GetError())))
+		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
 	}
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)

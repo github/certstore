@@ -74,21 +74,20 @@ func (nssStore) Identities() ([]Identity, error) {
 	}
 	var node *C.CERTCertListNode
 	for node = CertListHead(certs); !CertListEnd(node, certs); node = CertListNext(node) {
-		identities = append(identities, newNssIdentity(node))
+		identity := nssIdentity(*node)
+		identities = append(identities, &identity)
 	}
 	return identities, nil
 }
 
-type nssIdentity struct {
-	node *C.CERTCertListNode
-}
+type nssIdentity C.CERTCertListNode
 
 func (i *nssIdentity) Signer() (crypto.Signer, error) {
 	return i, nil
 }
 
 func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
-	var der = i.node.cert.derCert
+	var der = i.cert.derCert
 	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
 	cert, err := x509.ParseCertificate(bytes)
 	if err != nil {
@@ -98,7 +97,7 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 }
 
 func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
-	var der = i.node.cert.derCert
+	var der = i.cert.derCert
 	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
 	cert, err := x509.ParseCertificate(bytes)
 	if err != nil {
@@ -114,7 +113,8 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	var identities = make([]Identity, 0)
 	var certificates = make([]*x509.Certificate, 0)
 	for node = CertListHead(list); !CertListEnd(node, list); node = CertListNext(node) {
-		identities = append(identities, newNssIdentity(node))
+		identity := nssIdentity(*node)
+		identities = append(identities, &identity)
 	}
 	certificates = append(certificates, cert)
 	found := true
@@ -140,7 +140,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 }
 
 func (i *nssIdentity) Delete() error {
-	C.PK11_DeleteTokenCertAndKey(i.node.cert, nil)
+	C.PK11_DeleteTokenCertAndKey(i.cert, nil)
 	return nil
 }
 
@@ -160,7 +160,7 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
 	}
-	key := C.PK11_FindKeyByAnyCert(i.node.cert, nil)
+	key := C.PK11_FindKeyByAnyCert(i.cert, nil)
 	if key == nil {
 		return nil, errors.New("cannot find private key")
 	}
@@ -236,10 +236,6 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		sig = asn
 	}
 	return sig, nil
-}
-
-func newNssIdentity(node *C.CERTCertListNode) *nssIdentity {
-	return &nssIdentity{node: node}
 }
 
 func (nssStore) Import(data []byte, password string) error {

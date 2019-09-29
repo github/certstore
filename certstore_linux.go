@@ -1,8 +1,7 @@
 package certstore
 
 /*
-#cgo CFLAGS: -I/usr/include/nss -I/usr/include/nspr
-#cgo LDFLAGS: -lnss3 -lnspr4 -lsmime3
+#cgo pkg-config: nss
 #include <nss.h>
 #include <pk11pub.h>
 #include <nspr.h>

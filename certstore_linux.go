@@ -80,10 +80,8 @@ func (nssStore) Identities() ([]Identity, error) {
 		C.NSS_Shutdown()
 		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
 	}
-	var list *C.CERTCertList
 	var node *C.CERTCertListNode
-	list = certs
-	for node = CertListHead(list); !CertListEnd(node, list); node = CertListNext(node) {
+	for node = CertListHead(certs); !CertListEnd(node, certs); node = CertListNext(node) {
 		identities = append(identities, newNssIdentity(node))
 	}
 	return identities, nil

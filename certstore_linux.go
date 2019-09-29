@@ -67,7 +67,7 @@ type nssStore int
 func (nssStore) Identities() ([]Identity, error) {
 	var identities = make([]Identity, 0)
 	//fmt.Printf("Listing certificates:\n")
-	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
+	var certs = C.PK11_ListCerts(C.PK11CertListAll, nil)
 	if certs == nil {
 		C.NSS_Shutdown()
 		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
@@ -108,7 +108,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	var certs = C.PK11_ListCerts(C.PK11CertListType(C.PK11CertListAll), unsafe.Pointer(nil))
+	certs := C.PK11_ListCerts(C.PK11CertListAll, nil)
 	if certs == nil {
 		return nil, fmt.Errorf("Error %d, cannot list certificates...\n", int(C.PR_GetError()))
 	}

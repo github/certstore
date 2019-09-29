@@ -46,6 +46,18 @@ SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void 
 	ret_nick->len = PORT_Strlen(nick);
 	return ret_nick;
 }
+
+CERTCertListNode *CertListHead(CERTCertList *l) {
+	return CERT_LIST_HEAD(l);
+}
+
+CERTCertListNode *CertListNext(CERTCertListNode *n) {
+	return CERT_LIST_NEXT(n);
+}
+
+int CertListEnd(CERTCertListNode *n, CERTCertList *l) {
+	return CERT_LIST_END(n, l);
+}
 */
 import "C"
 import (
@@ -73,7 +85,7 @@ func (nssStore) Identities() ([]Identity, error) {
 		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
 	}
 	var node *C.CERTCertListNode
-	for node = CertListHead(certs); !CertListEnd(node, certs); node = CertListNext(node) {
+	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
 		identity := nssIdentity(*node)
 		identities = append(identities, &identity)
 	}
@@ -112,7 +124,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	list = certs
 	var identities = make([]Identity, 0)
 	var certificates = make([]*x509.Certificate, 0)
-	for node = CertListHead(list); !CertListEnd(node, list); node = CertListNext(node) {
+	for node = C.CertListHead(list); C.CertListEnd(node, list) == 0; node = C.CertListNext(node) {
 		identity := nssIdentity(*node)
 		identities = append(identities, &identity)
 	}
@@ -300,21 +312,6 @@ func openStore() (Store, error) {
 	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_256, 1)
 	C.SEC_PKCS12SetPreferredCipher(C.PKCS12_DES_EDE3_168, 1)
 	return nssStore(0), nil
-}
-
-func CertListHead(l *C.CERTCertList) *C.CERTCertListNode {
-	var list = l.list
-	return (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&list)))
-}
-
-func CertListNext(n *C.CERTCertListNode) *C.CERTCertListNode {
-	var list = n.links
-	return (*C.CERTCertListNode)(*(*unsafe.Pointer)(unsafe.Pointer(&list)))
-}
-
-func CertListEnd(n *C.CERTCertListNode, l *C.CERTCertList) bool {
-	var list = l.list
-	return *(*unsafe.Pointer)(unsafe.Pointer(n)) == *(*unsafe.Pointer)(unsafe.Pointer(&list))
 }
 
 func bmpString(s string) ([]byte, error) {

@@ -74,8 +74,11 @@ import (
 	"unsafe"
 )
 
+// nssStore is a bogus type. We have to explicitly open/close the store on
+// windows, so we provide those methods here too.
 type nssStore int
 
+// Identities implements the Store interface.
 func (nssStore) Identities() ([]Identity, error) {
 	var (
 		identities = make([]Identity, 0)
@@ -93,12 +96,15 @@ func (nssStore) Identities() ([]Identity, error) {
 	return identities, nil
 }
 
+// nssIdentity is a wrapper around a C.CERTCertListNode.
 type nssIdentity C.CERTCertListNode
 
+// Signer implements the Identity interface.
 func (i *nssIdentity) Signer() (crypto.Signer, error) {
 	return i, nil
 }
 
+// Certificate implements the Identity interface.
 func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 	var (
 		der   = i.cert.derCert
@@ -111,6 +117,7 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 	return cert, nil
 }
 
+// CertificateChain implements the Identity interface.
 func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	var (
 		der   = i.cert.derCert
@@ -158,14 +165,17 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	return certificates, nil
 }
 
+// Delete implements the Identity interface.
 func (i *nssIdentity) Delete() error {
 	C.PK11_DeleteTokenCertAndKey(i.cert, nil)
 	return nil
 }
 
+// Close implements the Identity interface.
 func (nssIdentity) Close() {
 }
 
+// Public implements the crypto.Signer interface.
 func (i *nssIdentity) Public() crypto.PublicKey {
 	cert, _ := i.Certificate()
 	if cert == nil {
@@ -174,6 +184,7 @@ func (i *nssIdentity) Public() crypto.PublicKey {
 	return cert.PublicKey
 }
 
+// Sign implements the crypto.Signer interface.
 func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hash := opts.HashFunc()
 	if len(digest) != hash.Size() {
@@ -257,6 +268,7 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	return sig, nil
 }
 
+// Import implements the Store interface.
 func (nssStore) Import(data []byte, password string) error {
 	unicodePassword, err := bmpString(password)
 	if unicodePassword == nil {
@@ -289,9 +301,11 @@ func (nssStore) Import(data []byte, password string) error {
 	return nil
 }
 
+// Close implements the Store interface.
 func (nssStore) Close() {
 }
 
+// openStore opens the current user's NSS database.
 func openStore() (Store, error) {
 	homeDir := os.Getenv("HOME")
 
@@ -323,6 +337,7 @@ func openStore() (Store, error) {
 	return nssStore(0), nil
 }
 
+// bmpString encodes a string into a UCS-2 bytestream.
 func bmpString(s string) ([]byte, error) {
 	ret := make([]byte, 0, 2*len(s)+2)
 	for _, r := range s {

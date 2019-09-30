@@ -78,7 +78,6 @@ type nssStore int
 
 func (nssStore) Identities() ([]Identity, error) {
 	var identities = make([]Identity, 0)
-	//fmt.Printf("Listing certificates:\n")
 	var certs = C.PK11_ListCerts(C.PK11CertListAll, nil)
 	if certs == nil {
 		C.NSS_Shutdown()

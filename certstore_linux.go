@@ -77,13 +77,15 @@ import (
 type nssStore int
 
 func (nssStore) Identities() ([]Identity, error) {
-	var identities = make([]Identity, 0)
-	var certs = C.PK11_ListCerts(C.PK11CertListAll, nil)
+	var (
+		identities = make([]Identity, 0)
+		certs      = C.PK11_ListCerts(C.PK11CertListAll, nil)
+		node       *C.CERTCertListNode
+	)
 	if certs == nil {
 		C.NSS_Shutdown()
 		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
 	}
-	var node *C.CERTCertListNode
 	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
 		identity := nssIdentity(*node)
 		identities = append(identities, &identity)
@@ -98,8 +100,10 @@ func (i *nssIdentity) Signer() (crypto.Signer, error) {
 }
 
 func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
-	var der = i.cert.derCert
-	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	var (
+		der   = i.cert.derCert
+		bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	)
 	cert, err := x509.ParseCertificate(bytes)
 	if err != nil {
 		return nil, err
@@ -108,8 +112,10 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 }
 
 func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
-	var der = i.cert.derCert
-	var bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	var (
+		der   = i.cert.derCert
+		bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
+	)
 	cert, err := x509.ParseCertificate(bytes)
 	if err != nil {
 		return nil, err
@@ -118,11 +124,13 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	if certs == nil {
 		return nil, fmt.Errorf("Error %d, cannot list certificates...\n", int(C.PR_GetError()))
 	}
-	var list *C.CERTCertList
-	var node *C.CERTCertListNode
+	var (
+		list         *C.CERTCertList
+		node         *C.CERTCertListNode
+		identities   = make([]Identity, 0)
+		certificates = make([]*x509.Certificate, 0)
+	)
 	list = certs
-	var identities = make([]Identity, 0)
-	var certificates = make([]*x509.Certificate, 0)
 	for node = C.CertListHead(list); C.CertListEnd(node, list) == 0; node = C.CertListNext(node) {
 		identity := nssIdentity(*node)
 		identities = append(identities, &identity)
@@ -230,7 +238,7 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	if ret != 0 {
 		return nil, errors.New("could not sign")
 	}
-	var sig = C.GoBytes(unsafe.Pointer(sd.data), C.int(sd.len))
+	sig := C.GoBytes(unsafe.Pointer(sd.data), C.int(sd.len))
 	if key.keyType == C.ecKey {
 		if len(sig)%2 != 0 {
 			return nil, errors.New("bad ecdsa signature")
@@ -254,25 +262,27 @@ func (nssStore) Import(data []byte, password string) error {
 	if unicodePassword == nil {
 		return err
 	}
-	var pass = C.SECITEM_AllocItem(nil, nil, C.uint(len(unicodePassword)))
+	pass := C.SECITEM_AllocItem(nil, nil, C.uint(len(unicodePassword)))
 	if pass == nil {
 		return errors.New("SECITEM_AllocItem failed")
 	}
 	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicodePassword[0]), C.size_t(len(unicodePassword)))
-	var p12 = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
-	var decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	var (
+		p12     = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
+		decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	)
 	if decoded != 0 {
 		return fmt.Errorf("Error %d, P12 decoding failed...\n", int(C.PR_GetError()))
 	}
-	var authenticated = C.SEC_PKCS12DecoderVerify(p12)
+	authenticated := C.SEC_PKCS12DecoderVerify(p12)
 	if authenticated != 0 {
 		return fmt.Errorf("Error %d, P12 authentication failed...\n", int(C.PR_GetError()))
 	}
-	var validated = C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
+	validated := C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
 	if validated != 0 {
 		return fmt.Errorf("Error %d, P12 validation failed...\n", int(C.PR_GetError()))
 	}
-	var imported = C.SEC_PKCS12DecoderImportBags(p12)
+	imported := C.SEC_PKCS12DecoderImportBags(p12)
 	if imported != 0 {
 		return fmt.Errorf("Error %d, P12 import failed...\n", int(C.PR_GetError()))
 	}

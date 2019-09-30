@@ -110,7 +110,7 @@ func (s macStore) Import(data []byte, password string) error {
 // Close implements the Store interface.
 func (s macStore) Close() {}
 
-// macIdentity implements the Identity iterface.
+// macIdentity implements the Identity interface.
 type macIdentity struct {
 	ref   C.SecIdentityRef
 	kref  C.SecKeyRef
@@ -124,7 +124,7 @@ func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 	return &macIdentity{ref: ref}
 }
 
-// Certificate implements the Identity iterface.
+// Certificate implements the Identity interface.
 func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	certRef, err := i.getCertRef()
 	if err != nil {
@@ -141,7 +141,7 @@ func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	return i.crt, nil
 }
 
-// CertificateChain implements the Identity iterface.
+// CertificateChain implements the Identity interface.
 func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	if i.chain != nil {
 		return i.chain, nil
@@ -190,7 +190,7 @@ func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	return chain, nil
 }
 
-// Signer implements the Identity iterface.
+// Signer implements the Identity interface.
 func (i *macIdentity) Signer() (crypto.Signer, error) {
 	// pre-load the certificate so Public() is less likely to return nil
 	// unexpectedly.
@@ -201,7 +201,7 @@ func (i *macIdentity) Signer() (crypto.Signer, error) {
 	return i, nil
 }
 
-// Delete implements the Identity iterface.
+// Delete implements the Identity interface.
 func (i *macIdentity) Delete() error {
 	itemList := []C.SecIdentityRef{i.ref}
 	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
@@ -227,7 +227,7 @@ func (i *macIdentity) Delete() error {
 	return nil
 }
 
-// Close implements the Identity iterface.
+// Close implements the Identity interface.
 func (i *macIdentity) Close() {
 	if i.ref != nilSecIdentityRef {
 		C.CFRelease(C.CFTypeRef(i.ref))
@@ -245,7 +245,7 @@ func (i *macIdentity) Close() {
 	}
 }
 
-// Public implements the crypto.Signer iterface.
+// Public implements the crypto.Signer interface.
 func (i *macIdentity) Public() crypto.PublicKey {
 	cert, err := i.Certificate()
 	if err != nil {
@@ -255,7 +255,7 @@ func (i *macIdentity) Public() crypto.PublicKey {
 	return cert.PublicKey
 }
 
-// Sign implements the crypto.Signer iterface.
+// Sign implements the crypto.Signer interface.
 func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hash := opts.HashFunc()
 

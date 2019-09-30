@@ -206,7 +206,7 @@ func (s *winStore) Close() {
 	s.store = nil
 }
 
-// winIdentity implements the Identity iterface.
+// winIdentity implements the Identity interface.
 type winIdentity struct {
 	chain  []C.PCCERT_CONTEXT
 	signer *winPrivateKey
@@ -220,12 +220,12 @@ func newWinIdentity(chain []C.PCCERT_CONTEXT) *winIdentity {
 	return &winIdentity{chain: chain}
 }
 
-// Certificate implements the Identity iterface.
+// Certificate implements the Identity interface.
 func (i *winIdentity) Certificate() (*x509.Certificate, error) {
 	return exportCertCtx(i.chain[0])
 }
 
-// CertificateChain implements the Identity iterface.
+// CertificateChain implements the Identity interface.
 func (i *winIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	var (
 		certs = make([]*x509.Certificate, len(i.chain))
@@ -267,7 +267,7 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 	return i.signer, nil
 }
 
-// Delete implements the Identity iterface.
+// Delete implements the Identity interface.
 func (i *winIdentity) Delete() error {
 	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
 	deleteCtx := C.CertDuplicateCertificateContext(i.chain[0])
@@ -290,7 +290,7 @@ func (i *winIdentity) Delete() error {
 	return nil
 }
 
-// Close implements the Identity iterface.
+// Close implements the Identity interface.
 func (i *winIdentity) Close() {
 	if i.signer != nil {
 		i.signer.Close()
@@ -351,7 +351,7 @@ func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*wi
 	}
 }
 
-// PublicKey implements the crypto.Signer interface.
+// Public implements the crypto.Signer interface.
 func (wpk *winPrivateKey) Public() crypto.PublicKey {
 	return wpk.publicKey
 }

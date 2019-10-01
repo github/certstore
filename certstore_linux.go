@@ -82,7 +82,7 @@ type nssStore int
 func (nssStore) Identities() ([]Identity, error) {
 	var (
 		identities = make([]Identity, 0)
-		certs      = C.PK11_ListCerts(C.PK11CertListAll, nil)
+		certs      = C.PK11_ListCerts(C.PK11CertListUser, nil)
 		node       *C.CERTCertListNode
 	)
 	if certs == nil {

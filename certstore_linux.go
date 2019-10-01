@@ -87,7 +87,7 @@ func (nssStore) Identities() ([]Identity, error) {
 	)
 	if certs == nil {
 		C.NSS_Shutdown()
-		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
+		return nil, fmt.Errorf("error %d, closing and returing", int(C.PR_GetError()))
 	}
 	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
 		identity := nssIdentity(*node)
@@ -129,7 +129,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	}
 	certs := C.PK11_ListCerts(C.PK11CertListAll, nil)
 	if certs == nil {
-		return nil, fmt.Errorf("Error %d, cannot list certificates...\n", int(C.PR_GetError()))
+		return nil, fmt.Errorf("error %d, cannot list certificates", int(C.PR_GetError()))
 	}
 	var (
 		list         *C.CERTCertList
@@ -151,7 +151,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 		for i := 0; i < len(identities); i++ {
 			cert, err = identities[i].Certificate()
 			if cert == nil {
-				return nil, fmt.Errorf("Error %d, cannot fetch certificate...\n", int(C.PR_GetError()))
+				return nil, fmt.Errorf("error %d, cannot fetch certificate", int(C.PR_GetError()))
 			}
 			subject := cert.Subject.String()
 			root := certificates[len(certificates)-1].Subject.String()
@@ -284,19 +284,19 @@ func (nssStore) Import(data []byte, password string) error {
 		decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
 	)
 	if decoded != 0 {
-		return fmt.Errorf("Error %d, P12 decoding failed...\n", int(C.PR_GetError()))
+		return fmt.Errorf("error %d, P12 decoding failed", int(C.PR_GetError()))
 	}
 	authenticated := C.SEC_PKCS12DecoderVerify(p12)
 	if authenticated != 0 {
-		return fmt.Errorf("Error %d, P12 authentication failed...\n", int(C.PR_GetError()))
+		return fmt.Errorf("error %d, P12 authentication failed", int(C.PR_GetError()))
 	}
 	validated := C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
 	if validated != 0 {
-		return fmt.Errorf("Error %d, P12 validation failed...\n", int(C.PR_GetError()))
+		return fmt.Errorf("error %d, P12 validation failed", int(C.PR_GetError()))
 	}
 	imported := C.SEC_PKCS12DecoderImportBags(p12)
 	if imported != 0 {
-		return fmt.Errorf("Error %d, P12 import failed...\n", int(C.PR_GetError()))
+		return fmt.Errorf("error %d, P12 import failed", int(C.PR_GetError()))
 	}
 	return nil
 }
@@ -315,14 +315,14 @@ func openStore() (Store, error) {
 
 	nssdb := path.Join(homeDir, ".pki", "nssdb")
 	if _, err := os.Stat(nssdb); os.IsNotExist(err) {
-		return nil, fmt.Errorf("NSS database not found at %s\n", nssdb)
+		return nil, fmt.Errorf("NSS database not found at %s", nssdb)
 	}
 	nssdbURLC := C.CString(fmt.Sprintf("sql:/%s/", nssdb))
 	defer C.free(unsafe.Pointer(nssdbURLC))
 	ok := C.NSS_InitReadWrite(nssdbURLC)
 	if ok != 0 {
 		C.NSS_Shutdown()
-		return nil, fmt.Errorf("Error %d, closing and returing...\n", int(C.PR_GetError()))
+		return nil, fmt.Errorf("error %d, closing and returing", int(C.PR_GetError()))
 	}
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)

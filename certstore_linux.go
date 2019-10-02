@@ -84,7 +84,7 @@ func (nssStore) Identities() ([]Identity, error) {
 	var list *C.CERTCertList
 	var node *C.CERTCertListNode
 	list = certs
-	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
+	for node = CertListHead(list); !CertListEnd(node, list); node = CertListNext(node) {
 		identities = append(identities, newNssIdentity(node))
 	}
 	return identities, nil
@@ -128,7 +128,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	list = certs
 	var identities = make([]Identity, 0)
 	var certificates = make([]*x509.Certificate, 0)
-	for node = CertListHead(list); ! CertListEnd(node, list); node = CertListNext(node) {
+	for node = CertListHead(list); !CertListEnd(node, list); node = CertListNext(node) {
 		identities = append(identities, newNssIdentity(node))
 	}
 	certificates = append(certificates, cert)
@@ -212,14 +212,14 @@ func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 	case C.rsaKey:
 		switch hash {
 		/*
-		case crypto.SHA1:
-			mechanism = C.CKM_SHA1_RSA_PKCS
-		case crypto.SHA256:
-			mechanism = C.CKM_SHA256_RSA_PKCS
-		case crypto.SHA384:
-			mechanism = C.CKM_SHA384_RSA_PKCS
-		case crypto.SHA512:
-			mechanism = C.CKM_SHA512_RSA_PKCS
+			case crypto.SHA1:
+				mechanism = C.CKM_SHA1_RSA_PKCS
+			case crypto.SHA256:
+				mechanism = C.CKM_SHA256_RSA_PKCS
+			case crypto.SHA384:
+				mechanism = C.CKM_SHA384_RSA_PKCS
+			case crypto.SHA512:
+				mechanism = C.CKM_SHA512_RSA_PKCS
 		*/
 		default:
 			mechanism = C.CKM_RSA_PKCS
@@ -227,8 +227,8 @@ func (i *nssPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 	case C.ecKey:
 		switch hash {
 		/*
-		case crypto.SHA1:
-			mechanism = C.CKM_ECDSA_SHA1
+			case crypto.SHA1:
+				mechanism = C.CKM_ECDSA_SHA1
 		*/
 		default:
 			mechanism = C.CKM_ECDSA

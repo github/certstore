@@ -89,15 +89,16 @@ func (nssStore) Identities() ([]Identity, error) {
 		C.NSS_Shutdown()
 		return nil, fmt.Errorf("error %d, closing and returing", int(C.PR_GetError()))
 	}
+	defer C.CERT_DestroyCertList(certs)
 	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
-		identity := nssIdentity(*node)
+		identity := nssIdentity(*C.CERT_DupCertificate(node.cert))
 		identities = append(identities, &identity)
 	}
 	return identities, nil
 }
 
-// nssIdentity is a wrapper around a C.CERTCertListNode.
-type nssIdentity C.CERTCertListNode
+// nssIdentity is a wrapper around a C.CERTCertificate.
+type nssIdentity C.CERTCertificate
 
 // Signer implements the Identity interface.
 func (i *nssIdentity) Signer() (crypto.Signer, error) {
@@ -107,7 +108,7 @@ func (i *nssIdentity) Signer() (crypto.Signer, error) {
 // Certificate implements the Identity interface.
 func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 	var (
-		der   = i.cert.derCert
+		der   = i.derCert
 		bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
 	)
 	cert, err := x509.ParseCertificate(bytes)
@@ -120,7 +121,7 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 // CertificateChain implements the Identity interface.
 func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	var (
-		der   = i.cert.derCert
+		der   = i.derCert
 		bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
 	)
 	cert, err := x509.ParseCertificate(bytes)
@@ -139,7 +140,7 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	)
 	list = certs
 	for node = C.CertListHead(list); C.CertListEnd(node, list) == 0; node = C.CertListNext(node) {
-		identity := nssIdentity(*node)
+		identity := nssIdentity(*node.cert)
 		identities = append(identities, &identity)
 	}
 	certificates = append(certificates, cert)
@@ -167,7 +168,8 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 
 // Delete implements the Identity interface.
 func (i *nssIdentity) Delete() error {
-	C.PK11_DeleteTokenCertAndKey(i.cert, nil)
+	cert := C.CERTCertificate(*i)
+	C.PK11_DeleteTokenCertAndKey(&cert, nil)
 	return nil
 }
 
@@ -190,7 +192,10 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
 	}
-	key := C.PK11_FindKeyByAnyCert(i.cert, nil)
+	var (
+		cert = C.CERTCertificate(*i)
+		key  = C.PK11_FindKeyByAnyCert(&cert, nil)
+	)
 	if key == nil {
 		return nil, errors.New("cannot find private key")
 	}

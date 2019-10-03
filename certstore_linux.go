@@ -166,7 +166,10 @@ func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
 
 // Delete implements the Identity interface.
 func (i *nssIdentity) Delete() error {
-	C.PK11_DeleteTokenCertAndKey((*C.CERTCertificate)(i), nil)
+	secstatus := C.PK11_DeleteTokenCertAndKey((*C.CERTCertificate)(i), nil)
+	if secstatus != C.SECSuccess {
+		return errors.New("failed to delete certificate & key pair")
+	}
 	return nil
 }
 

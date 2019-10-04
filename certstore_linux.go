@@ -58,6 +58,10 @@ CERTCertListNode *CertListNext(CERTCertListNode *n) {
 int CertListEnd(CERTCertListNode *n, CERTCertList *l) {
 	return CERT_LIST_END(n, l);
 }
+
+const char *GetErrorString() {
+	return PORT_ErrorToString(PR_GetError());
+}
 */
 import "C"
 import (
@@ -119,47 +123,19 @@ func (i *nssIdentity) Certificate() (*x509.Certificate, error) {
 
 // CertificateChain implements the Identity interface.
 func (i *nssIdentity) CertificateChain() ([]*x509.Certificate, error) {
-	var (
-		der   = i.derCert
-		bytes = C.GoBytes(unsafe.Pointer(der.data), C.int(der.len))
-	)
-	cert, err := x509.ParseCertificate(bytes)
-	if err != nil {
-		return nil, err
-	}
-	certs := C.PK11_ListCerts(C.PK11CertListAll, nil)
+	certs := C.CERT_GetCertChainFromCert((*C.CERTCertificate)(i), C.PR_Now(), C.certUsageAnyCA)
 	if certs == nil {
-		return nil, fmt.Errorf("error %d, cannot list certificates", int(C.PR_GetError()))
+		return nil, fmt.Errorf("error building certificate chain: %s", C.GoString(C.GetErrorString()))
 	}
-	var (
-		list         *C.CERTCertList
-		node         *C.CERTCertListNode
-		identities   = make([]Identity, 0)
-		certificates = make([]*x509.Certificate, 0)
-	)
-	list = certs
-	for node = C.CertListHead(list); C.CertListEnd(node, list) == 0; node = C.CertListNext(node) {
-		identities = append(identities, (*nssIdentity)(node.cert))
-	}
-	certificates = append(certificates, cert)
-	found := true
-	for found != false {
-		found = false
-		cert = certificates[len(certificates)-1]
-		issuer := cert.Issuer.String()
-		for i := 0; i < len(identities); i++ {
-			cert, err = identities[i].Certificate()
-			if cert == nil {
-				return nil, fmt.Errorf("error %d, cannot fetch certificate", int(C.PR_GetError()))
-			}
-			subject := cert.Subject.String()
-			root := certificates[len(certificates)-1].Subject.String()
-			if subject == issuer && subject != root {
-				certificates = append(certificates, cert)
-				found = true
-				break
-			}
+	defer C.CERT_DestroyCertList(certs)
+
+	certificates := make([]*x509.Certificate, 0)
+	for node := C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
+		cert, err := (*nssIdentity)(node.cert).Certificate()
+		if err != nil {
+			return nil, errors.New("unable to parse certificate when building chain")
 		}
+		certificates = append(certificates, cert)
 	}
 	return certificates, nil
 }

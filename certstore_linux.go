@@ -85,20 +85,19 @@ var goToNssAlg = map[crypto.Hash]C.SECOidTag{
 	crypto.SHA512: C.SEC_OID_SHA512,
 }
 
-// nssStore is a bogus type. We have to explicitly open/close the store on
-// windows, so we provide those methods here too.
-type nssStore int
+// nssStore is a wrapper around a C.NSSInitContext
+type nssStore C.NSSInitContext
 
 // Identities implements the Store interface.
-func (nssStore) Identities() ([]Identity, error) {
+func (store nssStore) Identities() ([]Identity, error) {
 	var (
 		identities = make([]Identity, 0)
 		certs      = C.PK11_ListCerts(C.PK11CertListUser, nil)
 		node       *C.CERTCertListNode
 	)
 	if certs == nil {
-		C.NSS_Shutdown()
-		return nil, fmt.Errorf("error %d, closing and returing", int(C.PR_GetError()))
+		store.Close()
+		return nil, fmt.Errorf("error %d, closing and returning", int(C.PR_GetError()))
 	}
 	defer C.CERT_DestroyCertList(certs)
 	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
@@ -264,7 +263,9 @@ func (nssStore) Import(data []byte, password string) error {
 }
 
 // Close implements the Store interface.
-func (nssStore) Close() {
+func (ctx nssStore) Close() {
+	nssCtx := C.NSSInitContext(ctx)
+	C.NSS_ShutdownContext(&nssCtx)
 }
 
 // openStore opens the current user's NSS database.
@@ -279,12 +280,17 @@ func openStore() (Store, error) {
 	if _, err := os.Stat(nssdb); os.IsNotExist(err) {
 		return nil, fmt.Errorf("NSS database not found at %s", nssdb)
 	}
-	nssdbURLC := C.CString(fmt.Sprintf("sql:/%s/", nssdb))
-	defer C.free(unsafe.Pointer(nssdbURLC))
-	ok := C.NSS_InitReadWrite(nssdbURLC)
-	if ok != 0 {
-		C.NSS_Shutdown()
-		return nil, fmt.Errorf("error %d, closing and returing", int(C.PR_GetError()))
+
+	var (
+		nssdbC       = C.CString(nssdb)
+		emptyStringC = C.CString("")
+	)
+	defer C.free(unsafe.Pointer(nssdbC))
+	defer C.free(unsafe.Pointer(emptyStringC))
+
+	ctx := C.NSS_InitContext(nssdbC, emptyStringC, emptyStringC, emptyStringC, nil, C.uint(0))
+	if ctx == nil {
+		return nil, fmt.Errorf("error opening NSS database %s: %s", nssdb, C.GoString(C.GetErrorString()))
 	}
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
 	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)
@@ -296,7 +302,7 @@ func openStore() (Store, error) {
 	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_192, 1)
 	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_256, 1)
 	C.SEC_PKCS12SetPreferredCipher(C.PKCS12_DES_EDE3_168, 1)
-	return nssStore(0), nil
+	return nssStore(*ctx), nil
 }
 
 // bmpString encodes a string into a UCS-2 bytestream.

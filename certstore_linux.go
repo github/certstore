@@ -157,7 +157,8 @@ func (i *nssIdentity) Delete() error {
 }
 
 // Close implements the Identity interface.
-func (nssIdentity) Close() {
+func (i *nssIdentity) Close() {
+	C.CERT_DestroyCertificate((*C.CERTCertificate)(i))
 }
 
 // Public implements the crypto.Signer interface.

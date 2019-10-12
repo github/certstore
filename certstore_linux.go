@@ -36,7 +36,6 @@ SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void 
 		fprintf(stdout, "old_nick %p, nick %p\n", old_nick, nick);
 		return NULL;
     }
-	//fprintf(stdout, "using nickname: %s\n", nick);
 	ret_nick = PORT_ZNew(SECItem);
 	if (ret_nick == NULL) {
 		PORT_Free(nick);

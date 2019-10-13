@@ -62,6 +62,21 @@ int CertListEnd(CERTCertListNode *n, CERTCertList *l) {
 const char *GetErrorString() {
 	return PORT_ErrorToString(PORT_GetError());
 }
+
+void EnablePKCS12Algorithms() {
+	SEC_PKCS12EnableCipher(PKCS12_RC4_40, 1);
+	SEC_PKCS12EnableCipher(PKCS12_RC4_128, 1);
+	SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_40, 1);
+	SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_128, 1);
+	SEC_PKCS12EnableCipher(PKCS12_DES_56, 1);
+	SEC_PKCS12EnableCipher(PKCS12_DES_EDE3_168, 1);
+#ifdef PKCS12_AES_CBC_128
+	SEC_PKCS12EnableCipher(PKCS12_AES_CBC_128, 1);
+	SEC_PKCS12EnableCipher(PKCS12_AES_CBC_192, 1);
+	SEC_PKCS12EnableCipher(PKCS12_AES_CBC_256, 1);
+#endif
+	SEC_PKCS12SetPreferredCipher(PKCS12_DES_EDE3_168, 1);
+}
 */
 import "C"
 import (
@@ -274,16 +289,7 @@ func openStore() (Store, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("error opening NSS database %s: %s", nssdb, C.GoString(C.GetErrorString()))
 	}
-	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_40, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_RC4_128, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_RC2_CBC_40, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_RC2_CBC_128, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_DES_56, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_DES_EDE3_168, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_128, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_192, 1)
-	C.SEC_PKCS12EnableCipher(C.PKCS12_AES_CBC_256, 1)
-	C.SEC_PKCS12SetPreferredCipher(C.PKCS12_DES_EDE3_168, 1)
+	C.EnablePKCS12Algorithms()
 	return nssStore(*ctx), nil
 }
 

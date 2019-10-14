@@ -253,6 +253,7 @@ func (nssStore) Import(data []byte, password string) error {
 	if pass == nil {
 		return errors.New("SECITEM_AllocItem failed")
 	}
+	defer C.SECITEM_FreeItem(pass, 1)
 	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicodePassword[0]), C.size_t(len(unicodePassword)))
 	var (
 		p12     = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)

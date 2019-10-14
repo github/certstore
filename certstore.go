@@ -12,9 +12,20 @@ var (
 	ErrUnsupportedHash = errors.New("unsupported hash algorithm")
 )
 
+type storeConfig struct{}
+
+// StoreOption are options that may be passed to Open()
+type StoreOption func(*storeConfig)
+
 // Open opens the system's certificate store.
-func Open() (Store, error) {
-	return openStore()
+func Open(options ...StoreOption) (Store, error) {
+	cfg := new(storeConfig)
+
+	for _, opt := range options {
+		opt(cfg)
+	}
+
+	return openStore(cfg)
 }
 
 // Store represents the system's certificate store.

@@ -76,7 +76,7 @@ type winStore struct {
 }
 
 // openStore opens the current user's personal cert store.
-func openStore() (*winStore, error) {
+func openStore(_ *storeConfig) (*winStore, error) {
 	storeName := unsafe.Pointer(stringToUTF16("MY"))
 	defer C.free(storeName)
 

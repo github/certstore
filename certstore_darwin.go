@@ -37,7 +37,7 @@ var (
 type macStore int
 
 // openStore is a function for opening a macStore.
-func openStore() (macStore, error) {
+func openStore(_ *storeConfig) (macStore, error) {
 	return macStore(0), nil
 }
 

@@ -233,28 +233,29 @@ func (nssStore) Import(data []byte, password string) error {
 	}
 	pass := C.SECITEM_AllocItem(nil, nil, C.uint(len(unicodePassword)))
 	if pass == nil {
-		return errors.New("SECITEM_AllocItem failed")
+		return errors.New("error allocating memory for PKCS#12 password")
 	}
 	defer C.SECITEM_FreeItem(pass, 1)
 	C.memcpy(unsafe.Pointer(pass.data), unsafe.Pointer(&unicodePassword[0]), C.size_t(len(unicodePassword)))
-	var (
-		p12     = C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
-		decoded = C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
-	)
-	if decoded != 0 {
-		return fmt.Errorf("error %d, P12 decoding failed", int(C.PR_GetError()))
+	p12 := C.SEC_PKCS12DecoderStart(pass, nil, nil, nil, nil, nil, nil, nil)
+	if p12 == nil {
+		return fmt.Errorf("error initialising PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
+	}
+	decoded := C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	if decoded != C.SECSuccess {
+		return fmt.Errorf("error during PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
 	}
 	authenticated := C.SEC_PKCS12DecoderVerify(p12)
-	if authenticated != 0 {
-		return fmt.Errorf("error %d, P12 authentication failed", int(C.PR_GetError()))
+	if authenticated != C.SECSuccess {
+		return fmt.Errorf("error during PKCS#12 verification: %s", C.GoString(C.GetErrorString()))
 	}
 	validated := C.SEC_PKCS12DecoderValidateBags(p12, (*[0]byte)(C.P12U_NicknameCollisionCallback))
-	if validated != 0 {
-		return fmt.Errorf("error %d, P12 validation failed", int(C.PR_GetError()))
+	if validated != C.SECSuccess {
+		return fmt.Errorf("error during PKCS#12 bag validation: %s", C.GoString(C.GetErrorString()))
 	}
 	imported := C.SEC_PKCS12DecoderImportBags(p12)
 	if imported != 0 {
-		return fmt.Errorf("error %d, P12 import failed", int(C.PR_GetError()))
+		return fmt.Errorf("error during PKCS#12 import: %s", C.GoString(C.GetErrorString()))
 	}
 	return nil
 }

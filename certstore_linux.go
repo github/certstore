@@ -110,8 +110,7 @@ func (store nssStore) Identities() ([]Identity, error) {
 		node       *C.CERTCertListNode
 	)
 	if certs == nil {
-		store.Close()
-		return nil, fmt.Errorf("error %d, closing and returning", int(C.PR_GetError()))
+		return nil, fmt.Errorf("error listing user certificates: %s", C.GoString(C.GetErrorString()))
 	}
 	defer C.CERT_DestroyCertList(certs)
 	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {

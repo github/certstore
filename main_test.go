@@ -41,7 +41,17 @@ func init() {
 	clearFixtures()
 }
 
-func withStore(t *testing.T, cb func(Store)) {
+func withStores(t *testing.T, cb func(Store)) {
+	_ =
+		t.Run("default store", func(t *testing.T) {
+			withDefaultStore(t, cb)
+		}) &&
+			t.Run("nss store", func(t *testing.T) {
+				withNSSStore(t, cb)
+			})
+}
+
+func withDefaultStore(t *testing.T, cb func(Store)) {
 	store, err := Open()
 	if err != nil {
 		t.Fatal(err)
@@ -51,49 +61,57 @@ func withStore(t *testing.T, cb func(Store)) {
 	cb(store)
 }
 
-func withIdentity(t *testing.T, i *fakeca.Identity, cb func(Identity)) {
-	withStore(t, func(store Store) {
-		// Import an identity
-		if err := store.Import(i.PFX("asdf"), "asdf"); err != nil {
-			t.Fatal(err)
-		}
+func withNSSStore(t *testing.T, cb func(Store)) {
+	store, err := OpenNSS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 
-		// Look for our imported identity
-		idents, err := store.Identities()
+	cb(store)
+}
+
+func withIdentity(t *testing.T, store Store, i *fakeca.Identity, cb func(Identity)) {
+	// Import an identity
+	if err := store.Import(i.PFX("asdf"), "asdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Look for our imported identity
+	idents, err := store.Identities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ident := range idents {
+		defer ident.Close()
+	}
+
+	var found Identity
+	for _, ident := range idents {
+		crt, err := ident.Certificate()
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, ident := range idents {
-			defer ident.Close()
-		}
 
-		var found Identity
-		for _, ident := range idents {
-			crt, err := ident.Certificate()
-			if err != nil {
-				t.Fatal(err)
+		if i.Certificate.Equal(crt) {
+			if found != nil {
+				t.Fatal("duplicate identity imported")
 			}
-
-			if i.Certificate.Equal(crt) {
-				if found != nil {
-					t.Fatal("duplicate identity imported")
-				}
-				found = ident
-			}
+			found = ident
 		}
-		if found == nil {
-			t.Fatal("imported identity not found")
+	}
+	if found == nil {
+		t.Fatal("imported identity not found")
+	}
+
+	// Clean up after ourselves.
+	defer func(f Identity) {
+		if err := f.Delete(); err != nil {
+			t.Fatal(err)
 		}
+	}(found)
 
-		// Clean up after ourselves.
-		defer func(f Identity) {
-			if err := f.Delete(); err != nil {
-				t.Fatal(err)
-			}
-		}(found)
-
-		cb(found)
-	})
+	cb(found)
 }
 
 func clearFixtures() {

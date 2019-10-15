@@ -229,7 +229,7 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		if C.PORT_GetError() == C.SEC_ERROR_INVALID_ALGORITHM {
 			return nil, ErrUnsupportedHash
 		}
-		return nil, fmt.Errorf("error signing: %s\n", C.GoString(C.GetErrorString()))
+		return nil, fmt.Errorf("error signing: %s", C.GoString(C.GetErrorString()))
 	}
 
 	if key.keyType == C.ecKey {
@@ -258,7 +258,7 @@ func (nssStore) Import(data []byte, password string) error {
 	if p12 == nil {
 		return fmt.Errorf("error initialising PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
 	}
-	decoded := C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	decoded := C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.ulong(len(data)))
 	if decoded != C.SECSuccess {
 		return fmt.Errorf("error during PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
 	}
@@ -278,17 +278,17 @@ func (nssStore) Import(data []byte, password string) error {
 }
 
 // Close implements the Store interface.
-func (ctx nssStore) Close() {
-	nssCtx := C.NSSInitContext(ctx)
+func (store nssStore) Close() {
+	nssCtx := C.NSSInitContext(store)
 	C.NSS_ShutdownContext(&nssCtx)
 }
 
 // openStore opens the current user's NSS database.
 func openStore() (Store, error) {
-	homeDir, err := os.UserHomeDir()
-
-	if err != nil {
-		return nil, err
+	// os.UserHomeDir added in Go 1.12.0
+	homeDir := os.Getenv("HOME")
+	if len(homeDir) == 0 {
+		return nil, errors.New("no $HOME variable")
 	}
 
 	nssdb := path.Join(homeDir, ".pki", "nssdb")
@@ -303,7 +303,7 @@ func openStore() (Store, error) {
 	defer C.free(unsafe.Pointer(nssdbC))
 	defer C.free(unsafe.Pointer(emptyStringC))
 
-	ctx := C.NSS_InitContext(nssdbC, emptyStringC, emptyStringC, emptyStringC, nil, C.uint(0))
+	ctx := C.NSS_InitContext(nssdbC, emptyStringC, emptyStringC, emptyStringC, nil, C.PRUint32(0))
 	if ctx == nil {
 		return nil, fmt.Errorf("error opening NSS database %s: %s", nssdb, C.GoString(C.GetErrorString()))
 	}

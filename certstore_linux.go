@@ -241,7 +241,7 @@ func (nssStore) Import(data []byte, password string) error {
 	if p12 == nil {
 		return fmt.Errorf("error initialising PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
 	}
-	decoded := C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	decoded := C.SEC_PKCS12DecoderUpdate(p12, (*C.uchar)(unsafe.Pointer(&data[0])), C.ulong(len(data)))
 	if decoded != C.SECSuccess {
 		return fmt.Errorf("error during PKCS#12 decoding: %s", C.GoString(C.GetErrorString()))
 	}

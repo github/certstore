@@ -21,29 +21,25 @@ SECItem *P12U_NicknameCollisionCallback(SECItem *old_nick, PRBool *cancel, void 
 	SECItem *ret_nick = NULL;
 	CERTCertificate *cert = (CERTCertificate *)wincx;
 	if (!cancel || !cert) {
-		fprintf(stdout, "cancel: %p, cert: %p\n", cancel, cert);
 		return NULL;
 	}
 	nick = CERT_MakeCANickname(cert);
 	if (!nick) {
-		fprintf(stdout, "nick %p\n", nick);
 		return NULL;
 	}
 	if (old_nick && old_nick->data && old_nick->len &&
-		PORT_Strlen(nick) == old_nick->len &&
-		!PORT_Strncmp((char *)old_nick->data, nick, old_nick->len)) {
+		PORT_Strlen(nick) == old_nick->len - 1 &&
+		!PORT_Strncmp((char *)old_nick->data, nick, old_nick->len - 1)) {
 		PORT_Free(nick);
-		fprintf(stdout, "old_nick %p, nick %p\n", old_nick, nick);
 		return NULL;
     }
 	ret_nick = PORT_ZNew(SECItem);
 	if (ret_nick == NULL) {
 		PORT_Free(nick);
-		fprintf(stdout, "ret_nick %p\n", ret_nick);
 		return NULL;
 	}
 	ret_nick->data = (unsigned char *)nick;
-	ret_nick->len = PORT_Strlen(nick);
+	ret_nick->len = PORT_Strlen(nick) + 1;
 	return ret_nick;
 }
 

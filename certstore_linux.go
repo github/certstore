@@ -188,6 +188,7 @@ func (i *nssIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	if key == nil {
 		return nil, errors.New("cannot find private key")
 	}
+	defer C.SECKEY_DestroyPrivateKey(key)
 
 	digestC := C.SECITEM_AllocItem(nil, nil, C.uint(len(digest)))
 	if digestC == nil {

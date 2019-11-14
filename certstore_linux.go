@@ -103,13 +103,12 @@ func (store nssStore) Identities() ([]Identity, error) {
 	var (
 		identities = make([]Identity, 0)
 		certs      = C.PK11_ListCerts(C.PK11CertListUser, nil)
-		node       *C.CERTCertListNode
 	)
 	if certs == nil {
 		return nil, fmt.Errorf("error listing user certificates: %s", C.GoString(C.GetErrorString()))
 	}
 	defer C.CERT_DestroyCertList(certs)
-	for node = C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
+	for node := C.CertListHead(certs); C.CertListEnd(node, certs) == 0; node = C.CertListNext(node) {
 		identities = append(identities, (*nssIdentity)(C.CERT_DupCertificate(node.cert)))
 	}
 	return identities, nil

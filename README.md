@@ -1,5 +1,4 @@
-# certstore [![GoDoc](https://godoc.org/github.com/mastahyeti/certstore?status.svg)](http://godoc.org/github.com/mastahyeti/certstore) [![Report card](https://goreportcard.com/badge/github.com/mastahyeti/certstore)](https://goreportcard.com/report/github.com/mastahyeti/certstore) [![OSX Build Status](https://travis-ci.org/mastahyeti/certstore.svg?branch=master)](https://travis-ci.org/mastahyeti/certstore) [![Windows Build status](https://ci.appveyor.com/api/projects/status/github/mastahyeti/certstore?branch=master&svg=true)](https://ci.appveyor.com/project/mastahyeti/certstore/branch/master)
-
+# certstore [![GoDoc](https://godoc.org/github.com/github/certstore?status.svg)](http://godoc.org/github.com/github/certstore) [![Report card](https://goreportcard.com/badge/github.com/github/certstore)](https://goreportcard.com/report/github.com/github/certstore) [![OSX Build Status](https://travis-ci.org/github/certstore.svg?branch=main)](https://travis-ci.org/github/certstore) [![Windows Build status](https://ci.appveyor.com/api/projects/status/github/github/certstore?branch=main&svg=true)](https://ci.appveyor.com/project/github/certstore/branch/main)
 
 Certstore is a Go library for accessing user identities stored in platform certificate stores. On Windows and macOS, certstore can enumerate user identities and sign messages with their private keys.
 
@@ -17,7 +16,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 
-	"github.com/mastahyeti/certstore"
+	"github.com/github/certstore"
 )
 
 func main() {

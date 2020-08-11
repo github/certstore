@@ -1,8 +1,8 @@
-module github.com/mastahyeti/certstore
+module github.com/github/certstore
 
 go 1.12
 
 require (
-	github.com/mastahyeti/fakeca v0.0.2
+	github.com/github/fakeca v0.1.0 // indirect
 	github.com/pkg/errors v0.8.1
 )

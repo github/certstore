@@ -11,7 +11,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/mastahyeti/fakeca"
+	"github.com/github/fakeca"
 )
 
 func TestImportDeleteRSA(t *testing.T) {

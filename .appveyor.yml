@@ -1,5 +1,5 @@
 skip_branch_with_pr: true
-os: 'Visual Studio 2015'
+os: "Visual Studio 2015"
 
 build: off
 
@@ -69,7 +69,7 @@ environment:
       GOARCH: amd64
       EXTLD: x86_64-w64-mingw32-gcc
 
-clone_folder: C:\gopath\src\github.com\mastahyeti\certstore
+clone_folder: C:\gopath\src\github.com\github\certstore
 
 before_test:
   # Ensure CGO is enabled

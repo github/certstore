@@ -1,0 +1,20 @@
+on: [push, pull_request]
+name: Test Windows (Go 1.8)
+jobs:
+  test:
+    strategy:
+      matrix:
+        go-version: ["1.8"]
+        # Doesn't work on Linux.
+        os: [windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go-version }}
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Test
+        # -d prevents installation, which fails for Go 1.8
+        run: go get -d -t -v ./... && go test -v ./...

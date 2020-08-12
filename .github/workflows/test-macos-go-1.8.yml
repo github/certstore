@@ -1,12 +1,12 @@
 on: [push, pull_request]
-name: Test
+name: Test macOS (Go 1.8)
 jobs:
   test:
     strategy:
       matrix:
-        go-version: ["1.8", "1.12", "1.13", "1.14", "1.x"]
+        go-version: ["1.8"]
         # Doesn't work on Linux.
-        os: [macos-latest, windows-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go
@@ -16,5 +16,5 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Test
-        # -d prevents installation, which fails for Go 1.8 on macOS
+        # -d prevents installation, which fails for Go 1.8
         run: go get -d -t -v ./... && go test -v ./...

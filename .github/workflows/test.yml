@@ -16,4 +16,5 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Test
-        run: go get -d -t -v ./... && go test
+        # -d prevents installation, which fails for Go 1.8 on macOS
+        run: go get -d -t -v ./... && go test -v ./...

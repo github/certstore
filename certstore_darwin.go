@@ -274,7 +274,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	}
 	defer C.CFRelease(C.CFTypeRef(cdigest))
 
-	algo, err := i.getAlgo(hash)
+	algo, err := i.getAlgo(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +301,27 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 }
 
 // getAlgo decides which algorithm to use with this key type for the given hash.
-func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err error) {
+func (i *macIdentity) getAlgo(opts crypto.SignerOpts) (algo C.SecKeyAlgorithm, err error) {
+	hash := opts.HashFunc()
 	var crt *x509.Certificate
 	if crt, err = i.Certificate(); err != nil {
+		return
+	}
+
+	if _, ok := opts.(*rsa.PSSOptions); ok {
+		switch hash {
+		case crypto.SHA1:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA1
+		case crypto.SHA256:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA256
+		case crypto.SHA384:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA384
+		case crypto.SHA512:
+			algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA512
+		default:
+			err = ErrUnsupportedHash
+		}
+
 		return
 	}
 

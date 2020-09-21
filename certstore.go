@@ -26,7 +26,7 @@ const (
 
 // Open opens the system's certificate store.
 func Open(location StoreLocation) (Store, error) {
-	return openStore()
+	return openStore(location)
 }
 
 // Store represents the system's certificate store.

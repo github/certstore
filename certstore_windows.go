@@ -76,11 +76,19 @@ type winStore struct {
 }
 
 // openStore opens the current user's personal cert store.
-func openStore() (*winStore, error) {
+func openStore(location StoreLocation) (*winStore, error) {
 	storeName := unsafe.Pointer(stringToUTF16("MY"))
 	defer C.free(storeName)
 
-	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, C.CERT_SYSTEM_STORE_CURRENT_USER, storeName)
+	var loc interface{}
+	switch location {
+	case User:
+		loc = C.CERT_SYSTEM_STORE_CURRENT_USER
+	case System:
+		loc = C.CERT_SYSTEM_STORE_LOCAL_MACHINE
+	}
+
+	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, loc, storeName)
 	if store == nil {
 		return nil, lastError("failed to open system cert store")
 	}

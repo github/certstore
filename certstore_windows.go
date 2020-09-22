@@ -81,15 +81,15 @@ func openStore(location StoreLocation) (*winStore, error) {
 	storeName := unsafe.Pointer(stringToUTF16("MY"))
 	defer C.free(storeName)
 
-	var loc interface{}
+	var flags C.DWORD
 	switch location {
 	case User:
-		loc = C.CERT_SYSTEM_STORE_CURRENT_USER
+		flags |= C.CERT_SYSTEM_STORE_CURRENT_USER
 	case System:
-		loc = C.CERT_SYSTEM_STORE_LOCAL_MACHINE
+		flags |= C.CERT_SYSTEM_STORE_LOCAL_MACHINE | C.CERT_STORE_READONLY_FLAG
 	}
 
-	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, loc, storeName)
+	store := C.CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, flags, storeName)
 	if store == nil {
 		return nil, lastError("failed to open system cert store")
 	}
@@ -350,6 +350,7 @@ func newWinPrivateKey(certCtx C.PCCERT_CONTEXT, publicKey crypto.PublicKey) (*wi
 		return &winPrivateKey{
 			publicKey: publicKey,
 			cngHandle: C.NCRYPT_KEY_HANDLE(provOrKey),
+			capiProv:  C.HCRYPTPROV(0),
 		}, nil
 	} else {
 		return &winPrivateKey{

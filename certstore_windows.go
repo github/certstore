@@ -40,31 +40,21 @@ var (
 )
 
 const (
-	certStoreProvSystem                   = 10                                                              // CERT_STORE_PROV_SYSTEM
-	certStoreCurrentUserID                = 1                                                               // CERT_SYSTEM_STORE_CURRENT_USER_ID
-	certStoreLocalMachineID               = 2                                                               // CERT_SYSTEM_STORE_LOCAL_MACHINE_ID
-	certSystemStoreLocationShift          = 16                                                              // CERT_SYSTEM_STORE_LOCATION_SHIFT
-	certStoreCurrentUser                  = uint32(certStoreCurrentUserID << certSystemStoreLocationShift)  // CERT_SYSTEM_STORE_CURRENT_USER
-	certStoreLocalMachine                 = uint32(certStoreLocalMachineID << certSystemStoreLocationShift) // CERT_SYSTEM_STORE_LOCAL_MACHINE
-	x509AsnEncoding                       = 0x00000001                                                      // X509_ASN_ENCODING
-	pkcs7AsnEncoding                      = 0x00010000                                                      // PKCS_7_ASN_ENCODING
-	certChainFindByIssuerCacheOnlyFlag    = 0x8000                                                          // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_FLAG
-	certChainFindByIssuerCacheOnlyURLFlag = 0x0004                                                          // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_URL_FLAG
-	certChainFindByIssuer                 = 1                                                               // CERT_CHAIN_FIND_BY_ISSUER
-	cryptAcquireCacheFlag                 = 0x1                                                             // CRYPT_ACQUIRE_CACHE_FLAG
-	cryptAcquireSilentFlag                = 0x40                                                            // CRYPT_ACQUIRE_SILENT_FLAG
-	cryptAcquireOnlyNcryptKeyFlag         = 0x40000                                                         // CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
-	bcryptPadPkcs1                        = 0x00000002                                                      // BCRYPT_PAD_PKCS1
-	bcryptPadPss                          = 0x00000008                                                      // BCRYPT_PAD_PSS
-	cryptENotFound                        = 0x80092004                                                      // CRYPT_E_NOT_FOUND
-	certNcryptKeySpec                     = 0xFFFFFFFF                                                      // CERT_NCRYPT_KEY_SPEC
-	cryptUserKeyset                       = 0x00001000                                                      // CRYPT_USER_KEYSET
-	pkcs12AlwaysCngKsp                    = 0x00000200                                                      // PKCS12_ALWAYS_CNG_KSP
-	certCloseStoreForceFlag               = 0x00000001                                                      // CERT_CLOSE_STORE_FORCE_FLAG
-	certCompareAny                        = 0                                                               // CERT_COMPARE_ANY
-	certCompareShift                      = 16                                                              // CERT_COMPARE_SHIFT
-	certFindAny                           = certCompareAny << certCompareShift                              // CERT_FIND_ANY
-	certStoreAddReplaceExisting           = 3                                                               // CERT_STORE_ADD_REPLACE_EXISTING
+	certChainFindByIssuerCacheOnlyFlag    = 0x8000                             // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_FLAG
+	certChainFindByIssuerCacheOnlyURLFlag = 0x0004                             // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_URL_FLAG
+	certChainFindByIssuer                 = 1                                  // CERT_CHAIN_FIND_BY_ISSUER
+	cryptAcquireCacheFlag                 = 0x1                                // CRYPT_ACQUIRE_CACHE_FLAG
+	cryptAcquireSilentFlag                = 0x40                               // CRYPT_ACQUIRE_SILENT_FLAG
+	cryptAcquireOnlyNcryptKeyFlag         = 0x40000                            // CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
+	bcryptPadPkcs1                        = 0x00000002                         // BCRYPT_PAD_PKCS1
+	bcryptPadPss                          = 0x00000008                         // BCRYPT_PAD_PSS
+	certNcryptKeySpec                     = 0xFFFFFFFF                         // CERT_NCRYPT_KEY_SPEC
+	cryptUserKeyset                       = 0x00001000                         // CRYPT_USER_KEYSET
+	pkcs12AlwaysCngKsp                    = 0x00000200                         // PKCS12_ALWAYS_CNG_KSP
+	certCloseStoreForceFlag               = 0x00000001                         // CERT_CLOSE_STORE_FORCE_FLAG
+	certCompareAny                        = 0                                  // CERT_COMPARE_ANY
+	certCompareShift                      = 16                                 // CERT_COMPARE_SHIFT
+	certFindAny                           = certCompareAny << certCompareShift // CERT_FIND_ANY
 )
 
 // winStore is a wrapper around a C.HCERTSTORE.
@@ -90,15 +80,20 @@ func OpenStoreWindows(store string, location StoreLocation) (Store, error) {
 		return nil, err
 	}
 
-	loc := certStoreCurrentUser
+	var loc uint32 = windows.CERT_SYSTEM_STORE_CURRENT_USER
 
 	if location == StoreLocationLocalMachine {
-		loc = certStoreLocalMachine
+		loc = windows.CERT_SYSTEM_STORE_LOCAL_MACHINE
 	}
 
-	h, err := windows.CertOpenStore(certStoreProvSystem, 0, 0, loc, uintptr(unsafe.Pointer(storeName)))
+	h, err := windows.CertOpenStore(windows.CERT_STORE_PROV_SYSTEM_W, 0, 0, loc, uintptr(unsafe.Pointer(storeName)))
 	if err != nil {
 		return nil, err
+	}
+
+	// https://github.com/golang/sys/pull/92
+	if h == 0 {
+		return nil, fmt.Errorf("open store failed")
 	}
 
 	return &winStore{h}, nil
@@ -121,7 +116,7 @@ func (s *winStore) Identities() ([]Identity, error) {
 		err    error
 		idents = []Identity{}
 
-		encoding = uintptr(x509AsnEncoding)
+		encoding = uintptr(windows.X509_ASN_ENCODING)
 		flags    = uintptr(certChainFindByIssuerCacheOnlyFlag | certChainFindByIssuerCacheOnlyURLFlag)
 		findType = uintptr(certChainFindByIssuer)
 	)
@@ -167,7 +162,7 @@ func (s *winStore) Identities() ([]Identity, error) {
 		idents = append(idents, newWinIdentity(chain))
 	}
 
-	if errno, ok := err.(syscall.Errno); ok && errno == cryptENotFound {
+	if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND)  {
 		goto fail
 	}
 
@@ -208,7 +203,7 @@ func (s *winStore) Import(data []byte, password string) error {
 
 	var (
 		ctx      *windows.CertContext
-		encoding = uintptr(x509AsnEncoding | pkcs7AsnEncoding)
+		encoding = uintptr(windows.X509_ASN_ENCODING | windows.PKCS_7_ASN_ENCODING)
 	)
 
 	for {
@@ -216,7 +211,7 @@ func (s *winStore) Import(data []byte, password string) error {
 		r, _, err := certFindCertificateInStore.Call(store, encoding, 0, uintptr(certFindAny), 0, uintptr(unsafe.Pointer(ctx)))
 
 		if r == 0 {
-			if errno, ok := err.(syscall.Errno); ok && errno == cryptENotFound {
+			if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND) {
 				break
 			}
 
@@ -224,7 +219,7 @@ func (s *winStore) Import(data []byte, password string) error {
 		}
 
 		ctx = (*windows.CertContext)(unsafe.Pointer(r))
-		r, _, err = certAddCertificateContextToStore.Call(uintptr(s.store), uintptr(unsafe.Pointer(ctx)), certStoreAddReplaceExisting, 0)
+		r, _, err = certAddCertificateContextToStore.Call(uintptr(s.store), uintptr(unsafe.Pointer(ctx)), windows.CERT_STORE_ADD_REPLACE_EXISTING, 0)
 		if r == 0 {
 			return err
 		}

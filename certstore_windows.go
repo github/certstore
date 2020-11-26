@@ -31,7 +31,6 @@ var (
 	certFreeCertificateContext        = crypt32.MustFindProc("CertFreeCertificateContext")
 	cryptAcquireCertificatePrivateKey = crypt32.MustFindProc("CryptAcquireCertificatePrivateKey")
 	pfxImportCertStore                = crypt32.MustFindProc("PFXImportCertStore")
-	certCloseStore                    = crypt32.MustFindProc("CertCloseStore")
 	certAddCertificateContextToStore  = crypt32.MustFindProc("CertAddCertificateContextToStore")
 
 	nCryptSignHash   = ncrypt.MustFindProc("NCryptSignHash")
@@ -199,7 +198,7 @@ func (s *winStore) Import(data []byte, password string) error {
 	if store == 0 {
 		return err
 	}
-	defer certCloseStore.Call(store, uintptr(certCloseStoreForceFlag))
+	defer windows.CertCloseStore(windows.Handle(store), certCloseStoreForceFlag)
 
 	var (
 		ctx      *windows.CertContext

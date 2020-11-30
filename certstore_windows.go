@@ -90,11 +90,6 @@ func OpenStoreWindows(store string, location StoreLocation) (Store, error) {
 		return nil, err
 	}
 
-	// https://github.com/golang/sys/pull/92
-	if h == 0 {
-		return nil, fmt.Errorf("open store failed")
-	}
-
 	return &winStore{h}, nil
 }
 

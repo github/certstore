@@ -396,7 +396,7 @@ type bcryptPkcs1PaddingInfo struct {
 
 type bcryptPssPaddingInfo struct {
 	pszAlgID *uint16
-	cbSalt   uint64
+	cbSalt   uint32
 }
 
 // cngSignHash signs a digest using the CNG APIs.
@@ -448,7 +448,7 @@ func (wpk *winPrivateKey) cngSignHash(opts crypto.SignerOpts, digest []byte) ([]
 			flags = bcryptPadPss
 			padPtr = uintptr(unsafe.Pointer(&bcryptPssPaddingInfo{
 				pszAlgID: pszAlgId,
-				cbSalt:   uint64(saltLength),
+				cbSalt:   uint32(saltLength),
 			}))
 
 		} else {

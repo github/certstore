@@ -24,13 +24,9 @@ var (
 	crypt32 = windows.MustLoadDLL("crypt32.dll")
 	ncrypt  = windows.MustLoadDLL("ncrypt.dll")
 
-	certDuplicateCertificateContext   = crypt32.MustFindProc("CertDuplicateCertificateContext")
-	certDeleteCertificateFromStore    = crypt32.MustFindProc("CertDeleteCertificateFromStore")
 	certFindCertificateInStore        = crypt32.MustFindProc("CertFindCertificateInStore")
 	certFindChainInStore              = crypt32.MustFindProc("CertFindChainInStore")
-	certFreeCertificateContext        = crypt32.MustFindProc("CertFreeCertificateContext")
 	cryptAcquireCertificatePrivateKey = crypt32.MustFindProc("CryptAcquireCertificatePrivateKey")
-	pfxImportCertStore                = crypt32.MustFindProc("PFXImportCertStore")
 	certAddCertificateContextToStore  = crypt32.MustFindProc("CertAddCertificateContextToStore")
 
 	nCryptSignHash   = ncrypt.MustFindProc("NCryptSignHash")
@@ -48,9 +44,6 @@ const (
 	bcryptPadPkcs1                        = 0x00000002                         // BCRYPT_PAD_PKCS1
 	bcryptPadPss                          = 0x00000008                         // BCRYPT_PAD_PSS
 	certNcryptKeySpec                     = 0xFFFFFFFF                         // CERT_NCRYPT_KEY_SPEC
-	cryptUserKeyset                       = 0x00001000                         // CRYPT_USER_KEYSET
-	pkcs12AlwaysCngKsp                    = 0x00000200                         // PKCS12_ALWAYS_CNG_KSP
-	certCloseStoreForceFlag               = 0x00000001                         // CERT_CLOSE_STORE_FORCE_FLAG
 	certCompareAny                        = 0                                  // CERT_COMPARE_ANY
 	certCompareShift                      = 16                                 // CERT_COMPARE_SHIFT
 	certFindAny                           = certCompareAny << certCompareShift // CERT_FIND_ANY
@@ -156,7 +149,7 @@ func (s *winStore) Identities() ([]Identity, error) {
 		idents = append(idents, newWinIdentity(chain))
 	}
 
-	if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND)  {
+	if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND) {
 		goto fail
 	}
 
@@ -182,18 +175,18 @@ func (s *winStore) Import(data []byte, password string) error {
 		return err
 	}
 
-	pfx := &cryptDataBlob{
-		cbData: uint32(len(data)),
-		pbData: &data[0],
+	pfx := &windows.CryptDataBlob{
+		Size: uint32(len(data)),
+		Data: &data[0],
 	}
 
-	flags := cryptUserKeyset | pkcs12AlwaysCngKsp
+	flags := uint32(windows.CRYPT_USER_KEYSET | windows.PKCS12_ALWAYS_CNG_KSP)
 
-	store, _, err := pfxImportCertStore.Call(uintptr(unsafe.Pointer(pfx)), uintptr(unsafe.Pointer(cpw)), uintptr(flags))
-	if store == 0 {
+	store, err := windows.PFXImportCertStore(pfx, cpw, flags)
+	if err != nil {
 		return err
 	}
-	defer windows.CertCloseStore(windows.Handle(store), certCloseStoreForceFlag)
+	defer windows.CertCloseStore(store, windows.CERT_CLOSE_STORE_FORCE_FLAG)
 
 	var (
 		ctx      *windows.CertContext
@@ -202,7 +195,7 @@ func (s *winStore) Import(data []byte, password string) error {
 
 	for {
 		// iterate through certs in temporary store
-		r, _, err := certFindCertificateInStore.Call(store, encoding, 0, uintptr(certFindAny), 0, uintptr(unsafe.Pointer(ctx)))
+		r, _, err := certFindCertificateInStore.Call(uintptr(store), encoding, 0, uintptr(certFindAny), 0, uintptr(unsafe.Pointer(ctx)))
 
 		if r == 0 {
 			if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND) {
@@ -236,7 +229,7 @@ type winIdentity struct {
 
 func newWinIdentity(chain []*windows.CertContext) *winIdentity {
 	for _, ctx := range chain {
-		certDuplicateCertificateContext.Call(uintptr(unsafe.Pointer(ctx)))
+		windows.CertDuplicateCertificateContext(ctx)
 	}
 
 	return &winIdentity{chain: chain}
@@ -292,13 +285,14 @@ func (i *winIdentity) getPrivateKey() (*winPrivateKey, error) {
 // Delete implements the Identity interface.
 func (i *winIdentity) Delete() error {
 	// duplicate cert context, since CertDeleteCertificateFromStore will free it.
-	deleteCtx, _, err := certDuplicateCertificateContext.Call(uintptr(unsafe.Pointer(i.chain[0])))
-	if deleteCtx == 0 {
-		return err
+
+	deleteCtx := windows.CertDuplicateCertificateContext(i.chain[0])
+	if deleteCtx == nil {
+		return errors.Errorf("cannot duplicate cert")
 	}
 
-	r, _, err := certDeleteCertificateFromStore.Call(deleteCtx)
-	if r == 0 {
+	err := windows.CertDeleteCertificateFromStore(deleteCtx)
+	if err != nil {
 		return err
 	}
 
@@ -323,7 +317,7 @@ func (i *winIdentity) Close() {
 	}
 
 	for _, ctx := range i.chain {
-		certFreeCertificateContext.Call(uintptr(unsafe.Pointer(ctx)))
+		windows.CertFreeCertificateContext(ctx)
 		i.chain = nil
 	}
 }

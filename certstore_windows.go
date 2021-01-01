@@ -27,7 +27,6 @@ var (
 	certFindCertificateInStore        = crypt32.MustFindProc("CertFindCertificateInStore")
 	certFindChainInStore              = crypt32.MustFindProc("CertFindChainInStore")
 	cryptAcquireCertificatePrivateKey = crypt32.MustFindProc("CryptAcquireCertificatePrivateKey")
-	certAddCertificateContextToStore  = crypt32.MustFindProc("CertAddCertificateContextToStore")
 
 	nCryptSignHash   = ncrypt.MustFindProc("NCryptSignHash")
 	nCryptFreeObject = ncrypt.MustFindProc("NCryptFreeObject")
@@ -201,8 +200,9 @@ func (s *winStore) Import(data []byte, password string) error {
 		}
 
 		ctx = (*windows.CertContext)(unsafe.Pointer(r))
-		r, _, err = certAddCertificateContextToStore.Call(uintptr(s.store), uintptr(unsafe.Pointer(ctx)), windows.CERT_STORE_ADD_REPLACE_EXISTING, 0)
-		if r == 0 {
+
+		err = windows.CertAddCertificateContextToStore(s.store, ctx, windows.CERT_STORE_ADD_REPLACE_EXISTING, nil)
+		if err != nil {
 			return err
 		}
 

@@ -163,11 +163,6 @@ fail:
 	return nil, err
 }
 
-type cryptDataBlob struct {
-	cbData uint32
-	pbData *byte
-}
-
 // Import implements the Store interface.
 func (s *winStore) Import(data []byte, password string) error {
 	cpw, err := windows.UTF16PtrFromString(password)

@@ -677,7 +677,7 @@ func checkStatus(s C.SECURITY_STATUS) error {
 }
 
 func (ss securityStatus) Error() string {
-	return fmt.Sprintf("SECURITY_STATUS 0x%08X", ss)
+	return fmt.Sprintf("SECURITY_STATUS 0x%08X", uint64(ss))
 }
 
 func stringToUTF16(s string) C.LPCWSTR {

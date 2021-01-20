@@ -407,15 +407,15 @@ func (wpk *winPrivateKey) cngSignHash(opts crypto.SignerOpts, digest []byte) ([]
 			if saltLen == rsa.PSSSaltLengthEqualsHash {
 				saltLen = len(digest)
 			}
-			padPtr = &C.BCRYPT_PSS_PADDING_INFO{
+			padPtr = unsafe.Pointer(&C.BCRYPT_PSS_PADDING_INFO{
 				pszAlgId: algId,
 				cbSalt:   C.ULONG(saltLen),
-			}
+			})
 			flags |= C.BCRYPT_PAD_PSS
 		} else {
-			padPtr = &C.BCRYPT_PKCS1_PADDING_INFO{
+			padPtr = unsafe.Pointer(&C.BCRYPT_PKCS1_PADDING_INFO{
 				pszAlgId: algId,
-			}
+			})
 			flags |= C.BCRYPT_PAD_PKCS1
 		}
 	}

@@ -358,7 +358,7 @@ func (wpk *winPrivateKey) Public() crypto.PublicKey {
 }
 
 // Sign implements the crypto.Signer interface.
-func (wpk *winPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func (wpk *winPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if wpk.capiProv != 0 {
 		return wpk.capiSignHash(opts, digest)
 	} else if wpk.cngHandle != 0 {
@@ -404,18 +404,18 @@ func (wpk *winPrivateKey) cngSignHash(opts crypto.SignerOpts, digest []byte) ([]
 
 		if pssOpts, ok := opts.(*rsa.PSSOptions); ok {
 			saltLen := pssOpts.SaltLength
-			if saltLen < 0 {
+			if saltLen == rsa.PSSSaltLengthEqualsHash {
 				saltLen = len(digest)
 			}
-			padPtr = unsafe.Pointer(&C.BCRYPT_PSS_PADDING_INFO{
+			padPtr = &C.BCRYPT_PSS_PADDING_INFO{
 				pszAlgId: algId,
 				cbSalt:   C.ULONG(saltLen),
-			})
+			}
 			flags |= C.BCRYPT_PAD_PSS
 		} else {
-			padPtr = unsafe.Pointer(&C.BCRYPT_PKCS1_PADDING_INFO{
+			padPtr = &C.BCRYPT_PKCS1_PADDING_INFO{
 				pszAlgId: algId,
-			})
+			}
 			flags |= C.BCRYPT_PAD_PKCS1
 		}
 	}
@@ -678,10 +678,7 @@ func checkStatus(s C.SECURITY_STATUS) error {
 }
 
 func (ss securityStatus) Error() string {
-	enc := make([]byte, 2, 10)
-	copy(enc, "0x")
-	h := strconv.AppendUint(enc, uint64(ss), 16)
-	return fmt.Sprintf("SECURITY_STATUS %s", string(h))
+	return fmt.Sprintf("SECURITY_STATUS 0x%08X", ss)
 }
 
 func stringToUTF16(s string) C.LPCWSTR {

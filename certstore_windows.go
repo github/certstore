@@ -39,7 +39,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"strconv"
 	"unicode/utf16"
 	"unsafe"
 

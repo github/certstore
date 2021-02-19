@@ -21,31 +21,15 @@ import (
 )
 
 var (
-	crypt32 = windows.MustLoadDLL("crypt32.dll")
-	ncrypt  = windows.MustLoadDLL("ncrypt.dll")
-
-	certFindCertificateInStore        = crypt32.MustFindProc("CertFindCertificateInStore")
-	certFindChainInStore              = crypt32.MustFindProc("CertFindChainInStore")
-	cryptAcquireCertificatePrivateKey = crypt32.MustFindProc("CryptAcquireCertificatePrivateKey")
-
+	ncrypt           = windows.MustLoadDLL("ncrypt.dll")
 	nCryptSignHash   = ncrypt.MustFindProc("NCryptSignHash")
 	nCryptFreeObject = ncrypt.MustFindProc("NCryptFreeObject")
 	nCryptDeleteKey  = ncrypt.MustFindProc("NCryptDeleteKey")
 )
 
 const (
-	certChainFindByIssuerCacheOnlyFlag    = 0x8000                             // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_FLAG
-	certChainFindByIssuerCacheOnlyURLFlag = 0x0004                             // CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_URL_FLAG
-	certChainFindByIssuer                 = 1                                  // CERT_CHAIN_FIND_BY_ISSUER
-	cryptAcquireCacheFlag                 = 0x1                                // CRYPT_ACQUIRE_CACHE_FLAG
-	cryptAcquireSilentFlag                = 0x40                               // CRYPT_ACQUIRE_SILENT_FLAG
-	cryptAcquireOnlyNcryptKeyFlag         = 0x40000                            // CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
-	bcryptPadPkcs1                        = 0x00000002                         // BCRYPT_PAD_PKCS1
-	bcryptPadPss                          = 0x00000008                         // BCRYPT_PAD_PSS
-	certNcryptKeySpec                     = 0xFFFFFFFF                         // CERT_NCRYPT_KEY_SPEC
-	certCompareAny                        = 0                                  // CERT_COMPARE_ANY
-	certCompareShift                      = 16                                 // CERT_COMPARE_SHIFT
-	certFindAny                           = certCompareAny << certCompareShift // CERT_FIND_ANY
+	bcryptPadPkcs1 = 0x00000002 // BCRYPT_PAD_PKCS1
+	bcryptPadPss   = 0x00000008 // BCRYPT_PAD_PSS
 )
 
 // winStore is a wrapper around a C.HCERTSTORE.
@@ -85,41 +69,27 @@ func OpenStoreWindows(store string, location StoreLocation) (Store, error) {
 	return &winStore{h}, nil
 }
 
-type certChainFindByIssuerPara struct {
-	Size                   uint32
-	UsageIdentifier        *byte
-	KeySpec                uint32
-	AcquirePrivateKeyFlags uint32
-	IssuerCount            uint32
-	Issuer                 windows.Pointer
-	FindCallback           windows.Pointer
-	FindArg                windows.Pointer
-}
-
 // Identities implements the Store interface.
 func (s *winStore) Identities() ([]Identity, error) {
 	var (
 		err    error
 		idents = []Identity{}
 
-		encoding = uintptr(windows.X509_ASN_ENCODING)
-		flags    = uintptr(certChainFindByIssuerCacheOnlyFlag | certChainFindByIssuerCacheOnlyURLFlag)
-		findType = uintptr(certChainFindByIssuer)
+		encoding = uint32(windows.X509_ASN_ENCODING)
+		flags    = uint32(windows.CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_FLAG | windows.CERT_CHAIN_FIND_BY_ISSUER_CACHE_ONLY_URL_FLAG)
+		findType = uint32(windows.CERT_CHAIN_FIND_BY_ISSUER)
 	)
-	var params certChainFindByIssuerPara
+	var params windows.CertChainFindByIssuerPara
 	params.Size = uint32(unsafe.Sizeof(params))
-	var paramsPtr = uintptr(unsafe.Pointer(&params))
+	var paramsPtr = unsafe.Pointer(&params)
 
 	var chainCtx *windows.CertChainContext
 
 	for {
-		h, _, _ := certFindChainInStore.Call(uintptr(s.store), encoding, flags, findType, paramsPtr, uintptr(unsafe.Pointer(chainCtx)))
-
-		if h == 0 {
+		chainCtx, _ = windows.CertFindChainInStore(s.store, encoding, flags, findType, paramsPtr, chainCtx)
+		if chainCtx == nil {
 			break
 		}
-
-		chainCtx = (*windows.CertChainContext)(unsafe.Pointer(h))
 
 		if chainCtx.ChainCount < 1 {
 			err = errors.New("bad chain")
@@ -184,22 +154,20 @@ func (s *winStore) Import(data []byte, password string) error {
 
 	var (
 		ctx      *windows.CertContext
-		encoding = uintptr(windows.X509_ASN_ENCODING | windows.PKCS_7_ASN_ENCODING)
+		encoding = uint32(windows.X509_ASN_ENCODING | windows.PKCS_7_ASN_ENCODING)
 	)
 
 	for {
 		// iterate through certs in temporary store
-		r, _, err := certFindCertificateInStore.Call(uintptr(store), encoding, 0, uintptr(certFindAny), 0, uintptr(unsafe.Pointer(ctx)))
+		ctx, err = windows.CertFindCertificateInStore(store, encoding, 0, windows.CERT_FIND_ANY, nil, ctx)
 
-		if r == 0 {
+		if ctx == nil {
 			if errno, ok := err.(syscall.Errno); ok && errno == syscall.Errno(windows.CRYPT_E_NOT_FOUND) {
 				break
 			}
 
 			return err
 		}
-
-		ctx = (*windows.CertContext)(unsafe.Pointer(r))
 
 		err = windows.CertAddCertificateContextToStore(s.store, ctx, windows.CERT_STORE_ADD_REPLACE_EXISTING, nil)
 		if err != nil {
@@ -333,35 +301,36 @@ func newWinPrivateKey(certCtx *windows.CertContext, publicKey crypto.PublicKey) 
 	}
 
 	var (
-		h        uintptr
+		h        windows.Handle
 		keySpec  uint32
-		mustFree int
-	)
-	r, _, err := cryptAcquireCertificatePrivateKey.Call(
-		uintptr(unsafe.Pointer(certCtx)),
-		cryptAcquireCacheFlag|cryptAcquireSilentFlag|cryptAcquireOnlyNcryptKeyFlag,
-		0, // Reserved, must be null.
-		uintptr(unsafe.Pointer(&h)),
-		uintptr(unsafe.Pointer(&keySpec)),
-		uintptr(unsafe.Pointer(&mustFree)),
+		mustFree bool
 	)
 
-	if r == 0 {
+	err := windows.CryptAcquireCertificatePrivateKey(
+		certCtx,
+		windows.CRYPT_ACQUIRE_CACHE_FLAG|windows.CRYPT_ACQUIRE_SILENT_FLAG|windows.CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG,
+		nil,
+		&h,
+		&keySpec,
+		&mustFree,
+	)
+
+	if err != nil {
 		return nil, err
 	}
 
-	if mustFree != 0 {
+	if mustFree {
 		// This shouldn't happen since we're not asking for cached keys.
 		return nil, errors.New("CryptAcquireCertificatePrivateKey set mustFree")
 	}
 
-	if keySpec != certNcryptKeySpec {
+	if keySpec != windows.CERT_NCRYPT_KEY_SPEC {
 		return nil, errors.New("cryptAcquireOnlyNcryptKeyFlag returned non cng key spec")
 	}
 
 	return &winPrivateKey{
 		publicKey: publicKey,
-		cngHandle: h,
+		cngHandle: uintptr(h),
 	}, nil
 }
 

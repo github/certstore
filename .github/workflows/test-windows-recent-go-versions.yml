@@ -7,7 +7,6 @@ jobs:
         go-version: ["1.14", "1.x"]
         # Doesn't work on Linux.
         os: [windows-latest]
-        goarch: ["amd64"]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go

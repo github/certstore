@@ -1,9 +1,7 @@
-# certstore [![PkgGoDev](https://pkg.go.dev/badge/github.com/github/certstore?tab=doc)](https://pkg.go.dev/github.com/github/certstore?tab=doc) [![Report card](https://goreportcard.com/badge/github.com/github/certstore)](https://goreportcard.com/report/github.com/github/certstore) [![AppVeyor Windows Build status](https://ci.appveyor.com/api/projects/status/github/github/certstore?branch=main&svg=true)](https://ci.appveyor.com/project/github/certstore/branch/main)
+# certstore [![PkgGoDev](https://pkg.go.dev/badge/github.com/github/certstore?tab=doc)](https://pkg.go.dev/github.com/github/certstore?tab=doc) [![Report card](https://goreportcard.com/badge/github.com/github/certstore)](https://goreportcard.com/report/github.com/github/certstore)
 
 [![Test macOS (recent Go versions)](<https://github.com/github/certstore/workflows/Test%20macOS%20(recent%20Go%20versions)/badge.svg>)](https://github.com/github/certstore/actions?query=workflow%3A%22Test+macOS+%28recent+Go+versions%29%22)  
-[![Test macOS (Go 1.8)](<https://github.com/github/certstore/workflows/Test%20macOS%20(Go%201.8)/badge.svg>)](https://github.com/github/certstore/actions?query=workflow%3A%22Test+macOS+%28Go+1.8%29%22)  
 [![Test Windows (recent Go versions)](<https://github.com/github/certstore/workflows/Test%20Windows%20(recent%20Go%20versions)/badge.svg>)](https://github.com/github/certstore/actions?query=workflow%3A%22Test+Windows+%28recent+Go+versions%29%22)  
-[![Test Windows (Go 1.8)](<https://github.com/github/certstore/workflows/Test%20Windows%20(Go%201.8)/badge.svg>)](https://github.com/github/certstore/actions?query=workflow%3A%22Test+Windows+%28Go+1.8%29%22)
 
 Certstore is a Go library for accessing user identities stored in platform certificate stores. On Windows and macOS, certstore can enumerate user identities and sign messages with their private keys.
 

@@ -263,6 +263,18 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		return nil, errors.New("bad digest for hash")
 	}
 
+	pssOpts, isPSS := opts.(*rsa.PSSOptions)
+	if isPSS &&
+		pssOpts.SaltLength != rsa.PSSSaltLengthAuto &&
+		pssOpts.SaltLength != rsa.PSSSaltLengthEqualsHash &&
+		pssOpts.SaltLength != hash.Size() {
+		// Apple's implementation of RSA-PSS always uses the output size
+		// of the hash as the salt length. Since we can't set a custom salt
+		// length, we have to abort if the user requested a specific length
+		// that is different from the Apple default.
+		return nil, errors.New("unsupported salt length, must equal hash size")
+	}
+
 	kref, err := i.getKeyRef()
 	if err != nil {
 		return nil, err
@@ -274,7 +286,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	}
 	defer C.CFRelease(C.CFTypeRef(cdigest))
 
-	algo, err := i.getAlgo(hash)
+	algo, err := i.getAlgo(hash, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +313,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 }
 
 // getAlgo decides which algorithm to use with this key type for the given hash.
-func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err error) {
+func (i *macIdentity) getAlgo(hash crypto.Hash, opts crypto.SignerOpts) (algo C.SecKeyAlgorithm, err error) {
 	var crt *x509.Certificate
 	if crt, err = i.Certificate(); err != nil {
 		return
@@ -322,17 +334,34 @@ func (i *macIdentity) getAlgo(hash crypto.Hash) (algo C.SecKeyAlgorithm, err err
 			err = ErrUnsupportedHash
 		}
 	case *rsa.PublicKey:
-		switch hash {
-		case crypto.SHA1:
-			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1
-		case crypto.SHA256:
-			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256
-		case crypto.SHA384:
-			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384
-		case crypto.SHA512:
-			algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512
-		default:
-			err = ErrUnsupportedHash
+		// If the signer options are an instance of *rsa.PSSOptions
+		// we must accordingly return a PSS algorithm (not PKCS1v15).
+		_, isPSS := opts.(*rsa.PSSOptions)
+
+		if isPSS {
+			switch hash {
+			case crypto.SHA256:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA256
+			case crypto.SHA384:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA384
+			case crypto.SHA512:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPSSSHA512
+			default:
+				err = ErrUnsupportedHash
+			}
+		} else {
+			switch hash {
+			case crypto.SHA1:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1
+			case crypto.SHA256:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256
+			case crypto.SHA384:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384
+			case crypto.SHA512:
+				algo = C.kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512
+			default:
+				err = ErrUnsupportedHash
+			}
 		}
 	default:
 		err = errors.New("unsupported key type")

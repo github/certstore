@@ -1,11 +1,14 @@
 package certstore
 
-import "errors"
+import (
+	"errors"
+	"log"
+)
 
 // This will hopefully give a compiler error that will hint at the fact that
 // this package isn't designed to work on Linux.
 func init() {
-	CERTSTORE_DOESNT_WORK_ON_LINIX
+	log.Fatal("certstore only works on macOS and Windows")
 }
 
 // Implement this function, just to silence other compiler errors.

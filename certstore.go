@@ -12,9 +12,21 @@ var (
 	ErrUnsupportedHash = errors.New("unsupported hash algorithm")
 )
 
+// StoreLocation defines the store location to look certificates in.
+type StoreLocation int
+
+const (
+	// User is the user scoped certificate store. "CURRENT_USER" on Windows or
+	// "login" on MacOS
+	User StoreLocation = iota
+	// System is the system scoped certificate store. "LOCAL_MACHINE" on Windows
+	// or "System" on MacOS
+	System
+)
+
 // Open opens the system's certificate store.
-func Open() (Store, error) {
-	return openStore()
+func Open(location StoreLocation) (Store, error) {
+	return openStore(location)
 }
 
 // Store represents the system's certificate store.

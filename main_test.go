@@ -42,7 +42,7 @@ func init() {
 }
 
 func withStore(t *testing.T, cb func(Store)) {
-	store, err := Open()
+	store, err := Open(User)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func withIdentity(t *testing.T, i *fakeca.Identity, cb func(Identity)) {
 }
 
 func clearFixtures() {
-	store, err := Open()
+	store, err := Open(User)
 	if err != nil {
 		panic(err)
 	}

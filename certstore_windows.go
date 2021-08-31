@@ -466,6 +466,10 @@ func (wpk *winPrivateKey) cngSignHash(opts crypto.SignerOpts, digest []byte) ([]
 
 // capiSignHash signs a digest using the CryptoAPI APIs.
 func (wpk *winPrivateKey) capiSignHash(opts crypto.SignerOpts, digest []byte) ([]byte, error) {
+	if _, ok := opts.(*rsa.PSSOptions); !ok {
+		return nil, ErrUnsupportedHash
+	}
+
 	hash := opts.HashFunc()
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")

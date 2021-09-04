@@ -414,6 +414,8 @@ func (wpk *winPrivateKey) cngSignHash(opts crypto.SignerOpts, digest []byte) ([]
 			saltLen := pssOpts.SaltLength
 			if saltLen == rsa.PSSSaltLengthEqualsHash {
 				saltLen = len(digest)
+			} else if saltLen == rsa.PSSSaltLengthAuto {
+				saltLen = hash.Size()
 			}
 			padPtr = unsafe.Pointer(&C.BCRYPT_PSS_PADDING_INFO{
 				pszAlgId: algId,

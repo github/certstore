@@ -1,3 +1,4 @@
+// Deprecated: Use the "github.com/github/smimesign/certstore" module instead.
 module github.com/github/certstore
 
 go 1.12
